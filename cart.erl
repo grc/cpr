@@ -13,7 +13,7 @@
 
 
 
--record(user, {name, address, card}).
+-record(user, {name, address, card_number, card_date}).
 
 %% Cart is initialised with a price list representing all valid order items
 
@@ -130,7 +130,12 @@ set_address(User,Address) ->
     {User#user{address=Address}, ok}. % TODO error cases
 
 set_credit_card(User,Number,Date) ->
-    {User#user{card={Number,Date}}, ok}. % TODO error cases
+    case cc:is_valid(User#user.address, Number, Date) of
+	true ->  {User#user{card_number=Number, card_date=Date}, ok};
+	false -> {User, {error, card_invalid}}
+    end.
+	
+
 
 
 %% Valid buy requests have defined values for a user's address and
@@ -139,21 +144,26 @@ set_credit_card(User,Number,Date) ->
 
 buy(#user{address=undefined} =U, State) ->
     {U, State, {error, billing_info}}; 
-buy(#user{card=undefined} = U, State) ->
-    {U, State, {error, credit_info}};
-buy(User, State) ->
-    {stop, {ok,invoice(State)}}.
+buy(U, State) ->
+    case cc:transaction(U#user.address, 
+			U#user.card_number, 
+			U#user.card_date, 
+			order_total(State)) of
+	{ok, _TrxId} -> {stop, {ok,invoice(State)}};
+	{error, _Reason} -> {U, State, {error, credit_info}}
+    end.
 
 
 
 %% Given a list of order tuples of the form {Item, Count, SubTotal},
 %% returns a tuple of {[Item,Count], Total} 
 invoice(State) ->    
-{_, _, SubTotals} = lists:unzip3(State),
-{[ {Item, N} || {Item, N, _SubTotal} <- State], lists:sum(SubTotals)}.
+{[ {Item, N} || {Item, N, _SubTotal} <- State], order_total(State)}.
 
-
-
+order_total(State) ->
+    {_, _, SubTotals} = lists:unzip3(State),
+    lists:sum(SubTotals).
+    
     
 
 
