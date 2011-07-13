@@ -13,6 +13,10 @@
 
 
 
+%% User record
+%% We elect to use a record rather than tuple to represent the user
+%% as it is anticipated that other user specific data will be added as
+%% time goes by: discount rates, mail shot category etc.
 -record(user, {name, address, card_number, card_date}).
 
 
@@ -71,26 +75,33 @@ sync_send(Pid, Message) ->
 
 
 %% Implementation
+
+%% init - The cart is initialised with a price list `Prices' a list
+%% [{Item,Price}] defining all the items which may be purchased.  This
+%% allows new items to be added without having to modify the core of the cart
+%% application though the requisite API helper functions will have to be added.
+
 init(UserName, Prices) ->
     io:format("cart (~p) - initialising with price list ~p~n", 
 	      [UserName, Prices]),
-    %% Cart is initialised with zero count order list drawn from the set
-    %% of valid items in the price list.
+    %% Cart is initialised with a zero count order list drawn from the
+    %% set of valid items in the price list.
     InitialOrderLines = [ {Item, 0, 0}||{Item, _Price} <- Prices],
     loop(#user{name=UserName}, InitialOrderLines, Prices).
 
 
-%% OrderLines format.  This could be kept as a list of order items,
-%% to be tallied when the client issues a `buy' command.  The
-%% behaviour of item removal, where removing three macarons from a
-%% basket containing 1 returns 0 macarons, suggests that a better
-%% model is to maintain a running total for each order category.
-
-
+%% OrderLines format.  This could be kept as a list of order items, to
+%% be tallied when the client issues a `buy' command.  The behaviour
+%% of item removal, where removing three macarons from a basket
+%% containing 1 returns 0 macarons, suggests that a better model is to
+%% maintain a running total for each order category.
+%%
 %% OrderLines and Prices are both stored as lists, though in each the
 %% first member of the tuple, Item, should always be unique.  Given
-%% the small size of the list in both cases, lists are prefered over sets
-%% for simplicity.
+%% the small size of the list in both cases, lists are prefered over
+%% sets for simplicity.
+
+
 loop(User, OrderLines, Prices) ->
     io:format("cart (~p) - looping with state ~p~n", [User, OrderLines]),
     receive
@@ -100,7 +111,7 @@ loop(User, OrderLines, Prices) ->
 	    loop(NewUser, NewOrderLines, Prices);
 	{sync_request, Pid, Message} ->
 	    
-	    case sync_request(Message, User, OrderLines, Prices) of 
+	    case sync_request(Message, User, OrderLines) of 
 		{NewUser,NewOrderLines,Response} ->
 		    reply(Pid,Response),
 		    loop(NewUser, NewOrderLines, Prices);
@@ -117,15 +128,15 @@ loop(User, OrderLines, Prices) ->
 request({order,Item,N}, User,OrderLines,Prices) ->
     {User,  order(User, Item,N,OrderLines,Prices)}.
 
-sync_request(view, User, OrderLines, _Prices) ->
+sync_request(view, User, OrderLines) ->
     {User,OrderLines,invoice(OrderLines)};
-sync_request({credit, Number,Date}, User, OrderLines, _Prices) ->
+sync_request({credit, Number,Date}, User, OrderLines) ->
     {NewUser, Response}=set_credit_card(User,Number,Date),
     {NewUser, OrderLines, Response};
-sync_request({address,Address}, User, OrderLines, _Prices) ->
+sync_request({address,Address}, User, OrderLines) ->
     {NewUser,Response} = set_address(User,Address),
     {NewUser,OrderLines,Response};
-sync_request(buy, User, OrderLines,_Prices) ->
+sync_request(buy, User, OrderLines) ->
     {User, NewOrderLines, Response} = buy(User,OrderLines),
     {User, NewOrderLines,Response}.
     
@@ -218,8 +229,10 @@ test() ->
     ok = macarons(TestPid, -2),
     ok = macarons(TestPid, -3),
     ok = donuts(TestPid,3),
-    view_cart(TestPid),
-    {error, billing_info} = buy(TestPid).
+    {[{donuts, 3}, {macarons,0}, {danish,0}, {cupcakes,0}], 150} = 
+	view_cart(TestPid),
+    {error, billing_info} = buy(TestPid),
+    test_passed.
 
 			    
 		 
