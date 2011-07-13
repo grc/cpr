@@ -4,7 +4,7 @@
 -module(cart).
 
 %% API
--export([start_link/1, donuts/2, macarons/2, danish/2, cupcakes/2]).
+-export([start_link/1, donuts/2, macarons/2, danish/2, cupcakes/2, view_cart/1]).
 
 
 %% Private interfaces
@@ -32,6 +32,9 @@ danish(ReferenceId, N) ->
 
 cupcakes(ReferenceId, N) -> 
     send(ReferenceId, {order, cupcakes, N}).
+
+view_cart(ReferenceId) ->
+    send(ReferenceId, view).
     
 %% API Impl
 send(Pid, Message) ->
@@ -46,7 +49,8 @@ send(Pid, Message) ->
 %% Implementation
 init(UserName, PriceList) ->
     io:format("cart (~p) - initialising with price list ~p~n", [UserName, PriceList]),
-    loop(UserName, PriceList, []).
+    InitialState = [ {Item, 0, 0}||{Item, _Price} <- PriceList],
+    loop(UserName, PriceList, InitialState).
 
 
 loop(UserName, PriceList, State) ->
@@ -56,11 +60,26 @@ loop(UserName, PriceList, State) ->
 	    io:format("cart (~p) - received stop~n", [UserName]),
 	    Pid ! ok;
 	{request, Pid, Message} ->
-	    Pid! ok,
+	    Pid! {reply,ok},
 	    loop(UserName, PriceList, handle_request(Message, State, PriceList));
 	Msg -> io:format("cart - Unexpected message: ~p~n", [Msg])
     end.
 
+
+
+
+
+handle_request({order, Item, N}, State, PriceList) ->
+    order(Item, N, State, PriceList);
+handle_request(view, State, _PriceList) ->
+    {_, _, SubTotals} = lists:unzip3(State),
+    {[ {Item, N} || {Item, N, _SubTotal} <- State],
+     lists:sum(SubTotals)}.
+    
+
+
+
+%% Init state to have zeros for all price list
 
 %% Current order format.  This could be kept as a list of order items,
 %% to be tallied when the client issues a `buy' command.  The
@@ -68,40 +87,29 @@ loop(UserName, PriceList, State) ->
 %% basket containing 1 returns 0 macarons, suggests that a better
 %% model is to maintain a running total for each order category.
 
-
-
-handle_request({order, Item, N}, State, PriceList) ->
-    order(Item, N, State, PriceList).
-
-%% order - > returns new order
-order(Item, N, Order, PriceList) when N >= 0 ->
     %% We look up prices at order rather than buy time so as to fail
     %% early if a non-existent item is ordered.
+
+%% order - > returns new order
+order(Item, N, Order, PriceList) ->
+    io:format("Ordering ~p with current order of ~p~n", [Item, Order]),
     {Item, Price} = lists:keyfind(Item, 1, PriceList),
-    case (ExistingOrder = lists:keyfind(Item, 1, Order) ) of
-	ExistingOrder = {Item, Quantity, SubTotal} ->
-	    %% TODO should use a set here
-	    %% Already ordered so increase quantity
-	    NewLineItem = {Item, Quantity + N, SubTotal+ (N*Price)},
-	    lists:keyreplace(Item, 1, Order, NewLineItem);
-	 false ->
-	    %% Not yet ordered so add it 
-	    [{Item, N, N*Price}| Order]
-    end;
-order(Item, N, Order, PriceList) when N < 0 ->
-    %% Reduce current order quantity down to a minimum of zero.
-    {Item, Price} = lists:keyfind(Item, 1, PriceList),
-    case (ExistingOrder = lists:keyfind(Item, 1, Order)) of 
-	ExistingOrder=false ->
-	    %% Not yet ordered so ignore
-	    Order;
-	ExistingOrder = {Item, Quantity, SubTotal} when Quantity > N ->
-	    NewLineItem = {Item, Quantity -N, SubTotal - (N*Price)},
-	    lists:keyreplace(Item, 1, Order, NewLineItem);
-	ExistingOrder = {Item, Quantity, _SubTotal} when Quantity =< N ->
-	    NewLineItem = {Item, 0, 0},
-	    lists:keyreplace(Item, 1, Order, NewLineItem)
-    end.
+    io:format("looking up current order~p~n", [Order]),
+    {Item, Quantity, SubTotal} = lists:keyfind(Item, 1, Order),
+    
+    NewLineItem = modify_item(Item, N+Quantity, SubTotal+(N*Price)),
+    lists:keyreplace(Item, 1, Order, NewLineItem).
+
+
+
+modify_item(Item, N, T) when N > 0 ->
+    {Item, N, T};
+modify_item(Item, _N, _T) ->
+    {Item, 0, 0}.
+
+
+
+
 
 
 
