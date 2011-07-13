@@ -15,7 +15,7 @@
 
 -record(user, {name, address, card_number, card_date}).
 
-%% Cart is initialised with a price list representing all valid order items
+
 
 %% API Definitions
 
@@ -74,24 +74,36 @@ sync_send(Pid, Message) ->
 init(UserName, Prices) ->
     io:format("cart (~p) - initialising with price list ~p~n", 
 	      [UserName, Prices]),
-    InitialState = [ {Item, 0, 0}||{Item, _Price} <- Prices],
-    loop(#user{name=UserName}, InitialState, Prices).
+    %% Cart is initialised with zero count order list drawn from the set
+    %% of valid items in the price list.
+    InitialOrderLines = [ {Item, 0, 0}||{Item, _Price} <- Prices],
+    loop(#user{name=UserName}, InitialOrderLines, Prices).
 
 
+%% OrderLines format.  This could be kept as a list of order items,
+%% to be tallied when the client issues a `buy' command.  The
+%% behaviour of item removal, where removing three macarons from a
+%% basket containing 1 returns 0 macarons, suggests that a better
+%% model is to maintain a running total for each order category.
 
-loop(User, State, Prices) ->
-    io:format("cart (~p) - looping with state ~p~n", [User, State]),
+
+%% OrderLines and Prices are both stored as lists, though in each the
+%% first member of the tuple, Item, should always be unique.  Given
+%% the small size of the list in both cases, lists are prefered over sets
+%% for simplicity.
+loop(User, OrderLines, Prices) ->
+    io:format("cart (~p) - looping with state ~p~n", [User, OrderLines]),
     receive
 	{request, Pid, Message} ->
 	    reply(Pid,ok),
-	    {NewUser, NewState} = handle_request(Message, User,State,Prices),
-	    loop(NewUser, NewState, Prices);
+	    {NewUser, NewOrderLines} = request(Message, User,OrderLines,Prices),
+	    loop(NewUser, NewOrderLines, Prices);
 	{sync_request, Pid, Message} ->
 	    
-	    case sync_request(Message, User, State, Prices) of 
-		{NewUser,NewState,Response} ->
+	    case sync_request(Message, User, OrderLines, Prices) of 
+		{NewUser,NewOrderLines,Response} ->
 		    reply(Pid,Response),
-		    loop(NewUser, NewState, Prices);
+		    loop(NewUser, NewOrderLines, Prices);
 		{stop, Response} ->
 		    reply(Pid,Response)
 	    end;
@@ -102,20 +114,20 @@ loop(User, State, Prices) ->
 
 
 
-handle_request({order,Item,N}, User,State,Prices) ->
-    {User,  order(Item,N,State,Prices)}.
+request({order,Item,N}, User,OrderLines,Prices) ->
+    {User,  order(User, Item,N,OrderLines,Prices)}.
 
-sync_request(view, User, State, _Prices) ->
-    {User,State,invoice(State)};
-sync_request({credit, Number,Date}, User, State, _Prices) ->
+sync_request(view, User, OrderLines, _Prices) ->
+    {User,OrderLines,invoice(OrderLines)};
+sync_request({credit, Number,Date}, User, OrderLines, _Prices) ->
     {NewUser, Response}=set_credit_card(User,Number,Date),
-    {NewUser, State, Response};
-sync_request({address,Address}, User, State, _Prices) ->
+    {NewUser, OrderLines, Response};
+sync_request({address,Address}, User, OrderLines, _Prices) ->
     {NewUser,Response} = set_address(User,Address),
-    {NewUser,State,Response};
-sync_request(buy, User, State,_Prices) ->
-    {User, NewState, Response} = buy(User,State),
-    {User, NewState,Response}.
+    {NewUser,OrderLines,Response};
+sync_request(buy, User, OrderLines,_Prices) ->
+    {User, NewOrderLines, Response} = buy(User,OrderLines),
+    {User, NewOrderLines,Response}.
     
 
 
@@ -142,58 +154,55 @@ set_credit_card(User,Number,Date) ->
 %% credit card info.  In that case the shopping basket is closed once
 %% order confirmation is sent,
 
-buy(#user{address=undefined} =U, State) ->
-    {U, State, {error, billing_info}}; 
-buy(U, State) ->
+buy(#user{address=undefined} =U, OrderLines) ->
+    {U, OrderLines, {error, billing_info}}; 
+buy(U, OrderLines) ->
     case cc:transaction(U#user.address, 
 			U#user.card_number, 
 			U#user.card_date, 
-			order_total(State)) of
-	{ok, _TrxId} -> {stop, {ok,invoice(State)}};
-	{error, _Reason} -> {U, State, {error, credit_info}}
+			order_total(OrderLines)) of
+	{ok, _TrxId} -> {stop, {ok,invoice(OrderLines)}};
+	{error, _Reason} -> {U, OrderLines, {error, credit_info}}
     end.
 
 
 
 %% Given a list of order tuples of the form {Item, Count, SubTotal},
 %% returns a tuple of {[Item,Count], Total} 
-invoice(State) ->    
-{[ {Item, N} || {Item, N, _SubTotal} <- State], order_total(State)}.
+invoice(OrderLines) ->    
+{[ {Item, N} || {Item, N, _SubTotal} <- OrderLines], order_total(OrderLines)}.
 
-order_total(State) ->
-    {_, _, SubTotals} = lists:unzip3(State),
+order_total(OrderLines) ->
+    {_, _, SubTotals} = lists:unzip3(OrderLines),
     lists:sum(SubTotals).
     
     
 
 
-%% Init state to have zeros for all price list
-
-%% Current order format.  This could be kept as a list of order items,
-%% to be tallied when the client issues a `buy' command.  The
-%% behaviour of item removal, where removing three macarons from a
-%% basket containing 1 returns 0 macarons, suggests that a better
-%% model is to maintain a running total for each order category.
-
     %% We look up prices at order rather than buy time so as to fail
     %% early if a non-existent item is ordered.
 
 %% order - > returns new order
-order(Item, N, Order, Prices) ->
-    io:format("Ordering ~p with current order of ~p~n", [Item, Order]),
+order(User, Item, N, Order, Prices) ->
+    %% TODO Debug conditionalio:format("Ordering ~p with current order of ~p~n", [Item, Order]),
     {Item, Price} = lists:keyfind(Item, 1, Prices),
-    io:format("looking up current order~p~n", [Order]),
-    {Item, Quantity, SubTotal} = lists:keyfind(Item, 1, Order),
-    
-    NewLineItem = modify_item(Item, N+Quantity, SubTotal+(N*Price)),
-    lists:keyreplace(Item, 1, Order, NewLineItem).
+    {Item, Quantity, _SubTotal} = lists:keyfind(Item, 1, Order),
+    [{Action, Q1}, {total, Q2}] = modify_item( N, Quantity),
+    Reply=io_lib:format("~p ~p ~p, Total number of ~p: ~p.~n", 
+			[Action, Q1, Item, Item, Q2]),
+    io:format(Reply),
+    %webclient:reply(User,Reply),
+    lists:keyreplace(Item, 1, Order, {Item, Q2, Q2*Price}).
 
 
 
-modify_item(Item, N, T) when N > 0 ->
-    {Item, N, T};
-modify_item(Item, _N, _T) ->
-    {Item, 0, 0}.
+modify_item( Delta, Current) when Delta + Current > 0 ->
+    case Delta >= 0 of
+	true -> [{added, Delta}, {total, Delta+Current}];
+	false -> [{removed, Delta}, {total, Delta + Current}]
+    end;
+modify_item( _Delta, Current) ->
+    [{removed, Current}, {total, 0}].
 
 
 

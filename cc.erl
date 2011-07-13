@@ -6,19 +6,19 @@
 % error returns, otherwise calls will succeed.
 
 
-is_valid(BillingAddress, invalid_card, ExpirationDate) ->
+is_valid(_BillingAddress, invalid_card, _ExpirationDate) ->
     false;
-is_valid(BillingAddress, CardNumber, ExpirationDate) ->
+is_valid(_BillingAddress, _CardNumber, _ExpirationDate) ->
     true.
 
 
 
 
-transaction(BillingAddress, invalid_card, ExpirationDate, Price) ->
+transaction(_BillingAddress, invalid_card, _ExpirationDate, _Price) ->
     {error,invalid_card};
-transaction(BillingAddress, insufficient_funds, ExpirationDate, Price) ->
+transaction(_BillingAddress, insufficient_funds, _ExpirationDate, _Price) ->
     {insufficient_funds};
-transaction(BillingAddress, CardNumber, ExpirationDate, Price) ->
+transaction(_BillingAddress, _CardNumber, _ExpirationDate, _Price) ->
     {ok, make_ref()}.
 
 
