@@ -172,23 +172,29 @@ buy(U, OrderLines,Prices) ->
 			U#user.card_number, 
 			U#user.card_date, 
 			order_total(OrderLines,Prices)) of
-	{ok, _TrxId} -> {U, OrderLines, {stop, {ok,invoice(OrderLines,Prices)}}};
-	{error, _Reason} -> {U, OrderLines, {error, credit_info}}
+	{ok, _TrxId} ->
+	    %% Transaction succesful, signal that we're done
+	    {stop, {ok,invoice(OrderLines,Prices)}};
+	{error, _Reason} -> 
+	    %% Trandsaction failed, retain state for another go.
+	    {U, OrderLines, {error, credit_info}}
     end.
 
 
 
-%% Given a list of order tuples of the form {Item, Count, SubTotal},
-%% returns a tuple of {[Item,Count], Total} 
+%% Given current set of orders and price list, return the orders and
+%% overall value as per API spec.
 invoice(OrderLines, Prices) ->    
 { OrderLines, order_total(OrderLines,Prices)}.
 
 order_total(Orders,Prices) ->
-    %% Calculate price of each line item in `Orders'
+    %% Calculate price of each line item in `Orders', looking up
+    %% corresponding price in `Prices'.
     SubTotals = lists:map(fun({I,N}) -> 
 				   {I,P} = lists:keyfind(I,1,Prices), 
 				   P*N end,
 			  Orders),
+    %% And the order total is the sum of the sub totals...
     lists:sum(SubTotals).
     
     
