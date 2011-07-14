@@ -86,7 +86,7 @@ init(UserName, Prices) ->
 	      [UserName, Prices]),
     %% Cart is initialised with a zero count order list drawn from the
     %% set of valid items in the price list.
-    InitialOrderLines = [ {Item, 0, 0}||{Item, _Price} <- Prices],
+    InitialOrderLines = [ {Item, 0}||{Item, _Price} <- Prices],
     loop(#user{name=UserName}, InitialOrderLines, Prices).
 
 
@@ -107,11 +107,11 @@ loop(User, OrderLines, Prices) ->
     receive
 	{request, Pid, Message} ->
 	    reply(Pid,ok),
-	    {NewUser, NewOrderLines} = request(Message, User,OrderLines,Prices),
-	    loop(NewUser, NewOrderLines, Prices);
+	    NewOrderLines = request(Message, User,OrderLines),
+	    loop(User, NewOrderLines, Prices);
 	{sync_request, Pid, Message} ->
 	    
-	    case sync_request(Message, User, OrderLines) of 
+	    case sync_request(Message, User, OrderLines,Prices) of 
 		{NewUser,NewOrderLines,Response} ->
 		    reply(Pid,Response),
 		    loop(NewUser, NewOrderLines, Prices);
@@ -125,20 +125,20 @@ loop(User, OrderLines, Prices) ->
 
 
 
-request({order,Item,N}, User,OrderLines,Prices) ->
-    {User,  order(User, Item,N,OrderLines,Prices)}.
+request({order,Item,N},User, OrderLines) ->
+    order(User, Item,N,OrderLines).
 
-sync_request(view, User, OrderLines) ->
-    {User,OrderLines,invoice(OrderLines)};
-sync_request({credit, Number,Date}, User, OrderLines) ->
+sync_request(view, User, OrderLines, Prices) ->
+    {User,OrderLines,invoice(OrderLines,Prices)};
+sync_request({credit, Number,Date}, User, OrderLines,_Prices) ->
     {NewUser, Response}=set_credit_card(User,Number,Date),
     {NewUser, OrderLines, Response};
-sync_request({address,Address}, User, OrderLines) ->
+sync_request({address,Address}, User, OrderLines,_Prices) ->
     {NewUser,Response} = set_address(User,Address),
     {NewUser,OrderLines,Response};
-sync_request(buy, User, OrderLines) ->
-    {User, NewOrderLines, Response} = buy(User,OrderLines),
-    {User, NewOrderLines,Response}.
+sync_request(buy, User, OrderLines,Prices) ->
+    buy(User,OrderLines,Prices).
+
     
 
 
@@ -165,14 +165,14 @@ set_credit_card(User,Number,Date) ->
 %% credit card info.  In that case the shopping basket is closed once
 %% order confirmation is sent,
 
-buy(#user{address=undefined} =U, OrderLines) ->
+buy(#user{address=undefined} =U, OrderLines, _Prices) ->
     {U, OrderLines, {error, billing_info}}; 
-buy(U, OrderLines) ->
+buy(U, OrderLines,Prices) ->
     case cc:transaction(U#user.address, 
 			U#user.card_number, 
 			U#user.card_date, 
-			order_total(OrderLines)) of
-	{ok, _TrxId} -> {stop, {ok,invoice(OrderLines)}};
+			order_total(OrderLines,Prices)) of
+	{ok, _TrxId} -> {U, OrderLines, {stop, {ok,invoice(OrderLines,Prices)}}};
 	{error, _Reason} -> {U, OrderLines, {error, credit_info}}
     end.
 
@@ -180,30 +180,27 @@ buy(U, OrderLines) ->
 
 %% Given a list of order tuples of the form {Item, Count, SubTotal},
 %% returns a tuple of {[Item,Count], Total} 
-invoice(OrderLines) ->    
-{[ {Item, N} || {Item, N, _SubTotal} <- OrderLines], order_total(OrderLines)}.
+invoice(OrderLines, Prices) ->    
+{ OrderLines, order_total(OrderLines,Prices)}.
 
-order_total(OrderLines) ->
-    {_, _, SubTotals} = lists:unzip3(OrderLines),
+order_total(Orders,Prices) ->
+    %% Calculate price of each line item in `Orders'
+    SubTotals = lists:map(fun({I,N}) -> 
+				   {I,P} = lists:keyfind(I,1,Prices), 
+				   P*N end,
+			  Orders),
     lists:sum(SubTotals).
     
     
-
-
-    %% We look up prices at order rather than buy time so as to fail
-    %% early if a non-existent item is ordered.
-
-%% order - > returns new order
-order(User, Item, N, Order, Prices) ->
-    %% TODO Debug conditionalio:format("Ordering ~p with current order of ~p~n", [Item, Order]),
-    {Item, Price} = lists:keyfind(Item, 1, Prices),
-    {Item, Quantity, _SubTotal} = lists:keyfind(Item, 1, Order),
+ %% order - > returns new order
+order(User, Item, N, Order) ->
+    {Item, Quantity} = lists:keyfind(Item, 1, Order),
     [{Action, Q1}, {total, Q2}] = modify_item( N, Quantity),
     Reply=io_lib:format("~p ~p ~p, Total number of ~p: ~p.~n", 
 			[Action, Q1, Item, Item, Q2]),
     io:format(Reply),
     %webclient:reply(User,Reply),
-    lists:keyreplace(Item, 1, Order, {Item, Q2, Q2*Price}).
+    lists:keyreplace(Item, 1, Order, {Item, Q2}).
 
 
 
