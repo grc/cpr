@@ -20,22 +20,23 @@
 %% [{Item,Price}] defining all the items which may be purchased.  This
 %% allows new items to be added without having to modify the core of
 %% the cart application though the requisite API helper functions will
-%% have to be added.  `UserTable' and `OrderTable' contain file names
+%% have to be added.  `Customer' and `Order' contain file names
 %% to be used for persistent staorage of user and order data
 %% respectively.
 
-init(UserName, Prices, {UserTable, OrderTable}) ->
+init(UserName, Prices, Tables) ->
     io:format("cart2 (~p) - initialising with price list ~p~n", 
 	      [UserName, Prices]),
     %% Cart is initialised with a zero count order list drawn from the
     %% set of valid items in the price list.
+    [Customer, Order] = Tables,
     InitialOrderLines = [ {Item, 0}||{Item, _Price} <- Prices],
-    dets:open_file(OrderTable, []),
-    dets:insert(OrderTable, InitialOrderLines),
+    dets:open_file(Order, []),
+    dets:insert(Order, InitialOrderLines),
 
-    dets:open_file(UserTable, []),
-    dets:insert(UserTable, {name, UserName}),
-    loop({UserTable,OrderTable}, Prices).
+    dets:open_file(Customer, []),
+    dets:insert(Customer, {name, UserName}),
+    loop(Tables, Prices).
 
 
 %% OrderLines format.  Now that we'reusing a DETS table, which
@@ -44,23 +45,22 @@ init(UserName, Prices, {UserTable, OrderTable}) ->
 
 
 
-loop(Tables, Prices) ->
+
+loop( Tables, Prices) ->
     io:format("cart {~p) looping~n", [self()]),
     receive
 	{stop, Pid} -> 
-	    {UserTable, OrderTable} = Tables,
 	    io:format("Cart ~p: stopping~n", [self()]),
-	    close([UserTable, OrderTable]),
+	    close(Tables),
 	    reply(Pid, ok);
 	{request, Pid, Message} ->
 	    reply(Pid,ok),
-	    {_UserTable, OrderTable} = Tables,
-	    ok = request(Message, OrderTable),
+	    [_Customer, Order] = Tables,
+	    ok = request(Message, Order),
 	    loop(Tables, Prices);
 	{sync_request, Pid, Message} ->
 	    io:format("received sync_request: ~p~n",[Message]),
-	    {UserTable, OrderTable} = Tables,
-	    case sync_request(Message, UserTable, OrderTable, Prices) of 
+	    case sync_request(Message, Tables, Prices) of 
 		{ok, Response} ->
 		    reply(Pid,Response),
 		    loop(Tables, Prices);
@@ -68,7 +68,7 @@ loop(Tables, Prices) ->
 		    %% We're going to go away so need to tidy up our
 		    %% persistent storage.
 		    io:format("Cart ~p: stopping~n", [self()]),
-		    close([UserTable, OrderTable]),
+		    close(Tables),
 		    reply(Pid,Response)
 		%Unexpected -> io:format("cart2:Unexpected case clause :~p~n", [Unexpected])
 	    end;
@@ -82,15 +82,15 @@ loop(Tables, Prices) ->
 request({order,Item,N},Table) ->
     order(Item,N,Table).
 
-sync_request(view, _UserTable, OrderTable, Prices) ->
-    invoice(OrderTable,Prices);
-sync_request({credit, Number,Date}, UserTable, _OrderTable, _Prices) ->
-    set_credit_card(Number,Date, UserTable);
-sync_request({address,Address}, UserTable, _OrderTable, _Prices) ->
-    set_address(Address,UserTable);
-sync_request(buy, UserTable, OrderTable, Prices) ->
-    buy(UserTable, OrderTable, Prices);
-sync_request(Unknown, _A, _B, _C) ->
+sync_request(view, [_Customer, Order], Prices) ->
+    invoice(Order,Prices);
+sync_request({credit, Number,Date}, [Customer, _Order], _Prices) ->
+    set_credit_card(Number,Date, Customer);
+sync_request({address,Address}, [Customer, _Order], _Prices) ->
+    set_address(Address,Customer);
+sync_request(buy, Tables, Prices) ->
+    buy(Tables, Prices);
+sync_request(Unknown, _A, _C) ->
     io:format("Unexpected sync_request: ~p~n", [Unknown]).
 
 
@@ -107,19 +107,19 @@ reply(Pid, Message) ->
 
 
 %% set_address
-set_address(UserTable,Address) ->
+set_address(Customer,Address) ->
     io:format("setting address to ~p~n", [Address]),
-    dets:insert(UserTable, {address, Address}). % TODO error cases
+    dets:insert(Customer, {address, Address}). % TODO error cases
 
-address(Table) ->
-    [Address] = dets:lookup(address, Table),
+address(Customer) ->
+    [Address] = dets:lookup(address, Customer),
     Address.
 
-set_credit_card(UserTable,Number,Date) ->
-    case cc:is_valid(address(UserTable), Number, Date) of
+set_credit_card(Customer,Number,Date) ->
+    case cc:is_valid(address(Customer), Number, Date) of
 	true ->  
-	    dets:insert({number, Number}, UserTable),
-	    dets:insert({date, Date}, UserTable),
+	    dets:insert({number, Number}, Customer),
+	    dets:insert({date, Date}, Customer),
 	    {ok, ok};
 	false -> {ok, {error, card_invalid}}
     end.
@@ -132,13 +132,13 @@ set_credit_card(UserTable,Number,Date) ->
 %% order confirmation is sent,
 
 
-buy(UserTable, OrderTable, Prices) ->
-    {Address, Number, Date} = user_details(UserTable),
-    Total = order_total(OrderTable,Prices),
+buy([Customer, Order], Prices) ->
+    {Address, Number, Date} = credit_details(Customer),
+    Total = order_total(Order,Prices),
     case cc:transaction(Address, Number, Date, Total) of
 	{ok, _TrxId} ->
 	    %% Transaction succesful, signal that we're done
-	    {stop, {ok,invoice(OrderTable,Prices)}};
+	    {stop, {ok,invoice(Order,Prices)}};
 	{error, _Reason} -> 
 	    %% Transaction failed, retain state for another go.  
 	    {ok, {error, credit_info}}
@@ -148,12 +148,12 @@ buy(UserTable, OrderTable, Prices) ->
 
 %% Given current set of orders and price list, return the orders and
 %% overall value as per API spec.
-invoice(OrderTable, Prices) ->    
+invoice(Order, Prices) ->    
     io:format("calculating invoice~n"),
     OrderLines = dets:foldl(fun (Elem, Acc) -> [Elem | Acc] end, 
 			    [],
-			    OrderTable),
-    {ok, { OrderLines, order_total(OrderTable,Prices)}}.
+			    Order),
+    {ok, { OrderLines, order_total(Order,Prices)}}.
 
 order_total(Table,Prices) ->
     %% Calculate price of each line item in `Table', looking up
@@ -192,8 +192,8 @@ modify_item( _Delta, Current) ->
 
 
 
-%%% user_details - returns credit card details from the given table.
-user_details(Table) ->
+%%% credit_details - returns credit card details from the given table.
+credit_details(Table) ->
     [Number] = dets:lookup(number, Table),
     [Date] = dets:lookup(date, Table),
     {address(Table), Number, Date}.

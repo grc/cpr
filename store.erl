@@ -131,9 +131,12 @@ close_cart({_Name, Ref, Pid}) ->
 new_cart(Name, Prices, Ref) ->
     spawn_link(cart2, init, [Name, Prices, tables_from_ref(Ref)]).
 
+%% tables_from_ref - generates unique names for DETS tabled keyed off
+%% a reference.  Returned as a list so that the cart can handle the
+%% collection as a whole.z
 tables_from_ref(Ref) ->
-    {io_lib:format("User-~p", [Ref]),
-     io_lib:format("Order-~p", [Ref])}.
+    [io_lib:format("User-~p", [Ref]),
+     io_lib:format("Order-~p", [Ref])].
 
     
 
