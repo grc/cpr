@@ -7,10 +7,14 @@
 -module(store).
 
 % Public interface
--export([start/0, stop/0, start_link/1, donuts/2]).
+-export([start/0, stop/0]).
+
+-export([start_link/1, donuts/2, macarons/2, danish/2, cupcakes/2, view_cart/1,
+	billing_address/2, credit_card/3, buy/1]).
+
 
 % Internal implementation details
--export([init/1, test/0]).
+-export([init/1, test/0, test_start_stop/0]).
 
 
 % Interface definitions
@@ -96,21 +100,22 @@ loop(Prices, State) ->
 	{Pid, stop} ->
 	    io:format("store - received stop from ~p~n", [Pid]),
 	    %% Stop to all our carts:
-	    lists:foreach(close_cart, State),
+	    lists:foreach(fun ({_Name, _Ref, CartPid}) ->
+				      io:format("Stopping ~p~n", [CartPid]),
+				      CartPid ! {stop, self() } end, State),
 	    Pid ! {reply,ok};
 	{Pid, {start_link, UserName} } -> % duplicate username?
 	    Ref = make_ref(),
 	    Pid ! {reply, {ok, Ref}},
-	    {ok, Table} = dets:open_file(table_from_ref(Ref), []),
-	    CartPid = spawn_link(cart2, init, [UserName, Prices, Table]), 
+	    CartPid = new_cart(UserName, Prices, Ref),
 	    loop(Prices, [{UserName, Ref, CartPid} |State]);
 	{'EXIT', Pid, Reason} ->
-	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]),
-	    {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
+	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]);
+	    % {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
 	    % TODO need to store state of cart in persistent storage
-	    NewPid = spawn_link(cart2, init, [UserName, Prices]),
-	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
-	    loop(Prices,NewState);
+	    %NewPid =  new_cart(UserName, Prices, Ref),
+	    %NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
+	    %loop(Prices,NewState);
 
 	{Sync, Pid, Ref, Message} ->
 	    io:format("store received ~p for ~p~n", [Message, Ref]),
@@ -120,13 +125,15 @@ loop(Prices, State) ->
 	
     end.
 
-close_cart(_Name, Ref, Pid) ->
-    Pid ! {self(), stop},
-    dets:close(table_from_ref(Ref)).
+close_cart({_Name, Ref, Pid}) ->
+    Pid ! {self(), stop}.
     
+new_cart(Name, Prices, Ref) ->
+    spawn_link(cart2, init, [Name, Prices, tables_from_ref(Ref)]).
 
-table_from_ref(Ref) ->
-    io_lib:format("~p", [Ref]).
+tables_from_ref(Ref) ->
+    {io_lib:format("User-~p", [Ref]),
+     io_lib:format("Order-~p", [Ref])}.
 
     
 
@@ -137,9 +144,48 @@ table_from_ref(Ref) ->
 
 %% Test harness
 
-test() ->
+test_invalid_order() ->
     start(),
     {ok, Ref} = start_link(fred),
     donuts(Ref,2),
-    invalid_order(Ref, 2).
+    invalid_order(Ref, 2),
+    stop(), timer:sleep(250).
     
+
+test_start_stop() ->
+    io:format("~nTEST: start_stop~n"),
+    start(),
+    {ok, Ref} = start_link(benny),
+    stop(), timer:sleep(250).
+
+
+test_minimal_order() ->
+    io:format("~nTEST: minimal_order~n"),
+    start(),
+    {ok, Ref} = start_link(fred),
+    ok = donuts(Ref,2),
+    Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,2}],100},
+    Actual = view_cart(Ref),
+    Expected = Actual,
+    timer:sleep(300),
+    stop(), timer:sleep(250).
+    
+test() ->
+    test_start_stop(),
+    test_empty_view(),
+    test_minimal_order(),
+    test_succeeded.
+
+test_empty_view() ->
+    io:format("~nTEST: empty_view~n"),
+    start(),
+    {ok, Ref} = start_link(fred),
+    Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,0}],0},
+    Actual = view_cart(Ref),
+    Expected = Actual,
+    timer:sleep(300),
+    stop(), timer:sleep(250).
+    
+    
+
+

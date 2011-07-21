@@ -13,64 +13,64 @@
 
 
 
-%% User record
-%% We elect to use a record rather than tuple to represent the user
-%% as it is anticipated that other user specific data will be added as
-%% time goes by: discount rates, mail shot category etc.
--record(user, {name, address, card_number, card_date}).
-
-
-
-%% API Definitions
-
-
-%% Whilst reference ID uniquely identifies the user as required by the
-%% spec, there is no constraint on the number of RefID's associated
-%% with a given user.
-
-
-
-
 
 %% Implementation
 
 %% init - The cart is initialised with a price list `Prices' a list
 %% [{Item,Price}] defining all the items which may be purchased.  This
-%% allows new items to be added without having to modify the core of the cart
-%% application though the requisite API helper functions will have to be added.
+%% allows new items to be added without having to modify the core of
+%% the cart application though the requisite API helper functions will
+%% have to be added.  `UserTable' and `OrderTable' contain file names
+%% to be used for persistent staorage of user and order data
+%% respectively.
 
-
-%% TODO, should store user info in separate table from order lines
-init(UserName, Prices, Table) ->
+init(UserName, Prices, {UserTable, OrderTable}) ->
     io:format("cart2 (~p) - initialising with price list ~p~n", 
 	      [UserName, Prices]),
     %% Cart is initialised with a zero count order list drawn from the
     %% set of valid items in the price list.
     InitialOrderLines = [ {Item, 0}||{Item, _Price} <- Prices],
-    dets:insert(Table, InitialOrderLines),
-    dets:insert(Table, {name, UserName}),
-    loop(Table, Prices).
+    dets:open_file(OrderTable, []),
+    dets:insert(OrderTable, InitialOrderLines),
+
+    dets:open_file(UserTable, []),
+    dets:insert(UserTable, {name, UserName}),
+    loop({UserTable,OrderTable}, Prices).
 
 
 %% OrderLines format.  Now that we'reusing a DETS table, which
-%% defaults to a set, the order lines format of {Item, Subtotal} is wholly justified.
+%% defaults to a set, the order lines format of {Item, Subtotal} is
+%% wholly justified.
 
 
 
-loop(Table, Prices) ->
+loop(Tables, Prices) ->
     io:format("cart {~p) looping~n", [self()]),
     receive
+	{stop, Pid} -> 
+	    {UserTable, OrderTable} = Tables,
+	    io:format("Cart ~p: stopping~n", [self()]),
+	    close([UserTable, OrderTable]),
+	    reply(Pid, ok);
 	{request, Pid, Message} ->
 	    reply(Pid,ok),
-	    NewOrderLines = request(Message, Table),
-	    loop(Table, Prices);
+	    {_UserTable, OrderTable} = Tables,
+	    ok = request(Message, OrderTable),
+	    loop(Tables, Prices);
 	{sync_request, Pid, Message} ->
-	    case sync_request(Message, Table, Prices) of 
-		{ok ,Response} ->
+	    io:format("received sync_request: ~p~n",[Message]),
+	    {UserTable, OrderTable} = Tables,
+	    case sync_request(Message, UserTable, OrderTable, Prices) of 
+		{ok, Response} ->
 		    reply(Pid,Response),
-		    loop(Table, Prices);
+		    loop(Tables, Prices);
 		{stop, Response} ->
+		    %% We're going to go away so need to tidy up our
+		    %% persistent storage.
+		    io:format("Cart ~p: stopping~n", [self()]),
+		    close([UserTable, OrderTable]),
 		    reply(Pid,Response)
+		%Unexpected -> io:format("cart2:Unexpected case clause :~p~n", [Unexpected])
 	    end;
 	Msg -> io:format("cart - Unexpected message: ~p~n", [Msg])
     end.
@@ -82,14 +82,17 @@ loop(Table, Prices) ->
 request({order,Item,N},Table) ->
     order(Item,N,Table).
 
-sync_request(view, Table, Prices) ->
-    invoice(Table,Prices);
-sync_request({credit, Number,Date}, Table, _Prices) ->
-    set_credit_card(Number,Date, Table);
-sync_request({address,Address}, Table, _Prices) ->
-    set_address(Address,Table);
-sync_request(buy, Table, Prices) ->
-    buy(Table,Prices).
+sync_request(view, _UserTable, OrderTable, Prices) ->
+    invoice(OrderTable,Prices);
+sync_request({credit, Number,Date}, UserTable, _OrderTable, _Prices) ->
+    set_credit_card(Number,Date, UserTable);
+sync_request({address,Address}, UserTable, _OrderTable, _Prices) ->
+    set_address(Address,UserTable);
+sync_request(buy, UserTable, OrderTable, Prices) ->
+    buy(UserTable, OrderTable, Prices);
+sync_request(Unknown, _A, _B, _C) ->
+    io:format("Unexpected sync_request: ~p~n", [Unknown]).
+
 
     
 
@@ -101,13 +104,24 @@ sync_request(buy, Table, Prices) ->
 reply(Pid, Message) ->
     Pid ! {reply, Message}.
 
-set_address(User,Address) ->
-    {User#user{address=Address}, ok}. % TODO error cases
 
-set_credit_card(User,Number,Date) ->
-    case cc:is_valid(User#user.address, Number, Date) of
-	true ->  {User#user{card_number=Number, card_date=Date}, ok};
-	false -> {User, {error, card_invalid}}
+
+%% set_address
+set_address(UserTable,Address) ->
+    io:format("setting address to ~p~n", [Address]),
+    dets:insert(UserTable, {address, Address}). % TODO error cases
+
+address(Table) ->
+    [Address] = dets:lookup(address, Table),
+    Address.
+
+set_credit_card(UserTable,Number,Date) ->
+    case cc:is_valid(address(UserTable), Number, Date) of
+	true ->  
+	    dets:insert({number, Number}, UserTable),
+	    dets:insert({date, Date}, UserTable),
+	    {ok, ok};
+	false -> {ok, {error, card_invalid}}
     end.
 	
 
@@ -118,15 +132,15 @@ set_credit_card(User,Number,Date) ->
 %% order confirmation is sent,
 
 
-buy(Table, Prices) ->
-    {Address, Number, Date} = user_details(Table),
-    Total = order_total(Table,Prices),
+buy(UserTable, OrderTable, Prices) ->
+    {Address, Number, Date} = user_details(UserTable),
+    Total = order_total(OrderTable,Prices),
     case cc:transaction(Address, Number, Date, Total) of
 	{ok, _TrxId} ->
 	    %% Transaction succesful, signal that we're done
-	    {stop, {ok,invoice(Table,Prices)}};
+	    {stop, {ok,invoice(OrderTable,Prices)}};
 	{error, _Reason} -> 
-	    %% Transaction failed, retain state for another go.
+	    %% Transaction failed, retain state for another go.  
 	    {ok, {error, credit_info}}
     end.
 
@@ -134,13 +148,17 @@ buy(Table, Prices) ->
 
 %% Given current set of orders and price list, return the orders and
 %% overall value as per API spec.
-invoice(OrderLines, Prices) ->    
-{ OrderLines, order_total(OrderLines,Prices)}.
+invoice(OrderTable, Prices) ->    
+    io:format("calculating invoice~n"),
+    OrderLines = dets:foldl(fun (Elem, Acc) -> [Elem | Acc] end, 
+			    [],
+			    OrderTable),
+    {ok, { OrderLines, order_total(OrderTable,Prices)}}.
 
 order_total(Table,Prices) ->
-    %% TODO, Must ensure that only order items in table
     %% Calculate price of each line item in `Table', looking up
     %% corresponding price in `Prices'.
+    io:format("Calculating prices~n"),
     dets:foldl(fun({I,N}, Acc) ->
 		       {I,P} = lists:keyfind(I, 1, Prices),
 		       Acc + P*N end,
@@ -151,7 +169,9 @@ order_total(Table,Prices) ->
     
  %% order - > returns new order
 order(Item, N, Table) ->
-    {Item, Quantity} = dets:lookup(Table, Item),
+    io:format("Processing an order for ~p ~p~n", [N, Item]),
+    [{Item, Quantity}] = dets:lookup(Table, Item),
+    io:format("Item found"),
     [{Action, Q1}, {total, Q2}] = modify_item( N, Quantity),
     Reply=io_lib:format("~p ~p ~p, Total number of ~p: ~p.~n", 
 			[Action, Q1, Item, Item, Q2]),
@@ -172,14 +192,21 @@ modify_item( _Delta, Current) ->
 
 
 
-
+%%% user_details - returns credit card details from the given table.
 user_details(Table) ->
-    Address = dets:lookup(address, Table),
-    Number = dets:lookup(number, Table),
-    Date = dets:lookup(date, Table),
-    {Address, Number, Date}.
+    [Number] = dets:lookup(number, Table),
+    [Date] = dets:lookup(date, Table),
+    {address(Table), Number, Date}.
 
 
+
+%%% close - close the DETS tables passed in, then delete the
+%%% underlying file.
+close(Tables) ->
+    lists:map(fun (T) ->
+		      io:format("Cart: closing table ~p~n", [T]),
+		      ok = dets:close(T),
+		      ok = file:delete(T) end, Tables).
 
 
 			    
