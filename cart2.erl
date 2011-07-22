@@ -9,7 +9,7 @@
 
 
 %% Private interfaces
--export([init/3]).
+-export([init/4]).
 
 
 
@@ -24,24 +24,37 @@
 %% to be used for persistent staorage of user and order data
 %% respectively.
 
-init(UserName, Prices, Tables) ->
-    io:format("cart2 (~p) - initialising with price list ~p~n", 
+
+
+%% init - start variant sets up initial state in the DETS tables,
+%% restart variant just opens them.
+%%
+%% OrderLines format.  Now that we're using a DETS table, which
+%% defaults to a set, the order lines format of {Item, Subtotal} is
+%% wholly justified.
+
+init(UserName, Prices, Tables, start) ->
+     io:format("cart2 (~p) - initialising with price list ~p~n", 
 	      [UserName, Prices]),
-    %% Cart is initialised with a zero count order list drawn from the
-    %% set of valid items in the price list.
     [Customer, Order] = Tables,
+
     InitialOrderLines = [ {Item, 0}||{Item, _Price} <- Prices],
-    dets:open_file(Order, []),
+    {ok, Order} = dets:open_file(Order, []),
     dets:insert(Order, InitialOrderLines),
 
-    dets:open_file(Customer, []),
+
+    {ok, Customer} = dets:open_file(Customer, []),
     dets:insert(Customer, {name, UserName}),
+    loop(Tables,Prices);
+
+init(_UserName, Prices, Tables, restart) ->
+    io:format("cart2: restarting ~p~n", [self()]),
+    [Customer, Order] = Tables,
+    {ok, Customer} = dets:open_file(Customer, []),
+    {ok, Order} = dets:open_file(Order, []),
     loop(Tables, Prices).
 
 
-%% OrderLines format.  Now that we'reusing a DETS table, which
-%% defaults to a set, the order lines format of {Item, Subtotal} is
-%% wholly justified.
 
 
 

@@ -68,15 +68,42 @@ async_send(RefId, Message) ->
 sync_send(RefId, Message) ->
     send(sync_request, RefId, Message).
 
-send(Sync, RefId,Message) ->
+
+%%% Time outs on send: The API is intended to hide the fact that a
+%%% server might die and be restarted.  A race condition exists where
+%%% one message might crash the server and a second be in flight
+%%% before the supervisor is notified of the death.  In that case the
+%%% message will be lost, so a time out and retry mechanism is
+%%% required.
+
+
+
+send(Sync, RefId, Message) ->
+    send(Sync, RefId, Message, 0).
+
+
+%% TODO file static values
+
+%% TODO need to add a unique marker to message as they may pass in flight
+
+send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
     ?MODULE ! {Sync, self(), RefId, Message},
-     receive
+    io:format("Sent ~p, ~p~n", [Sync, Message]),
+    receive
+	 
 	{reply, Reply} ->
 	    Reply
-     end.
+    after
+	500 ->
+	    io:format("Retrying~n"),
+	    send(Sync,RefId, Message, RetryCount +1)
+		
+    end.
+
     
 send(Message) ->
     ?MODULE ! {self(),Message},
+    io:format("Sent ~p~n", [Message]),
     receive
 	{reply, Reply} ->
 	    Reply
@@ -107,33 +134,32 @@ loop(Prices, State) ->
 	{Pid, {start_link, UserName} } -> % duplicate username?
 	    Ref = make_ref(),
 	    Pid ! {reply, {ok, Ref}},
-	    CartPid = new_cart(UserName, Prices, Ref),
+	    CartPid = new_cart(UserName, Prices, Ref, start),
 	    loop(Prices, [{UserName, Ref, CartPid} |State]);
 	{'EXIT', Pid, Reason} ->
-	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]);
-	    % {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
-	    % TODO need to store state of cart in persistent storage
-	    %NewPid =  new_cart(UserName, Prices, Ref),
-	    %NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
-	    %loop(Prices,NewState);
+	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]),
+	    {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
+	    NewPid =  new_cart(UserName, Prices, Ref, restart),
+	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
+	    loop(Prices,NewState);
 
 	{Sync, Pid, Ref, Message} ->
 	    io:format("store received ~p for ~p~n", [Message, Ref]),
 	    {_UserName, Ref, CartPid} = lists:keyfind(Ref, 2, State),
 	    CartPid ! {Sync, Pid, Message},
-	    loop(Prices,State)
+	    loop(Prices,State);
+	Unknown ->
+	    io:format("Store received unexpected message: ~p~n", [Unknown])
 	
     end.
 
-close_cart({_Name, Ref, Pid}) ->
-    Pid ! {self(), stop}.
     
-new_cart(Name, Prices, Ref) ->
-    spawn_link(cart2, init, [Name, Prices, tables_from_ref(Ref)]).
+new_cart(Name, Prices, Ref, Type) ->
+    spawn_link(cart2, init, [Name, Prices, tables_from_ref(Ref), Type]).
 
 %% tables_from_ref - generates unique names for DETS tabled keyed off
 %% a reference.  Returned as a list so that the cart can handle the
-%% collection as a whole.z
+%% collection as a whole.
 tables_from_ref(Ref) ->
     [io_lib:format("User-~p", [Ref]),
      io_lib:format("Order-~p", [Ref])].
@@ -147,12 +173,7 @@ tables_from_ref(Ref) ->
 
 %% Test harness
 
-test_invalid_order() ->
-    start(),
-    {ok, Ref} = start_link(fred),
-    donuts(Ref,2),
-    invalid_order(Ref, 2),
-    stop(), timer:sleep(250).
+
     
 
 test_start_stop() ->
@@ -177,6 +198,7 @@ test() ->
     test_start_stop(),
     test_empty_view(),
     test_minimal_order(),
+    test_invalid_order(),
     test_succeeded.
 
 test_empty_view() ->
@@ -185,10 +207,27 @@ test_empty_view() ->
     {ok, Ref} = start_link(fred),
     Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,0}],0},
     Actual = view_cart(Ref),
-    Expected = Actual,
+    compare_cart(Expected, Actual),
     timer:sleep(300),
     stop(), timer:sleep(250).
-    
-    
 
+
+test_invalid_order() ->
+    io:format("~nTEST: minimal_order~n"),
+    start(),
+    {ok, Ref} = start_link(fred),
+    donuts(Ref,2),
+    invalid_order(Ref, 2),
+    Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,2}],100},
+    Actual = view_cart(Ref),
+    io:format("View cart shows: ~p~n", [Actual]),
+    compare_cart(Expected, Actual),
+    timer:sleep(1000),
+    stop(), timer:sleep(250).    
+    
+compare_cart({E1, E2}, {A1, A2}) ->
+    A1Sorted = lists:sort(A1),
+    E1Sorted = lists:sort(E1),
+    A1 = E1,
+    E2 = A2.
 
