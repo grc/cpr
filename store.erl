@@ -12,9 +12,11 @@
 -export([start_link/1, donuts/2, macarons/2, danish/2, cupcakes/2, view_cart/1,
 	billing_address/2, credit_card/3, buy/1]).
 
+% Testing interface
+-export([invalid_order/2]).
 
 % Internal implementation details
--export([init/1, test/0, test_start_stop/0]).
+-export([init/1]).
 
 
 % Interface definitions
@@ -134,12 +136,12 @@ loop(Prices, State) ->
 	{Pid, {start_link, UserName} } -> % duplicate username?
 	    Ref = make_ref(),
 	    Pid ! {reply, {ok, Ref}},
-	    CartPid = new_cart(UserName, Prices, Ref, start),
+	    CartPid = new_cart(UserName, Prices, Ref),
 	    loop(Prices, [{UserName, Ref, CartPid} |State]);
 	{'EXIT', Pid, Reason} ->
 	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]),
 	    {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
-	    NewPid =  new_cart(UserName, Prices, Ref, restart),
+	    NewPid =  new_cart(UserName, Prices, Ref),
 	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
 	    loop(Prices,NewState);
 
@@ -154,80 +156,19 @@ loop(Prices, State) ->
     end.
 
     
-new_cart(Name, Prices, Ref, Type) ->
-    spawn_link(cart2, init, [Name, Prices, tables_from_ref(Ref), Type]).
+new_cart(Name, Prices, Ref) ->
+    spawn_link(cart2, init, [Name, Prices, Ref]),
 
-%% tables_from_ref - generates unique names for DETS tabled keyed off
-%% a reference.  Returned as a list so that the cart can handle the
-%% collection as a whole.
-tables_from_ref(Ref) ->
-    [io_lib:format("User-~p", [Ref]),
-     io_lib:format("Order-~p", [Ref])].
+
+
 
     
 
 
-% Currently storing {User, Ref, Pid} in list.  Expect to have to
-% deal with large numbers of users so use ETS?
 
 
 %% Test harness
 
 
     
-
-test_start_stop() ->
-    io:format("~nTEST: start_stop~n"),
-    start(),
-    {ok, Ref} = start_link(benny),
-    stop(), timer:sleep(250).
-
-
-test_minimal_order() ->
-    io:format("~nTEST: minimal_order~n"),
-    start(),
-    {ok, Ref} = start_link(fred),
-    ok = donuts(Ref,2),
-    Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,2}],100},
-    Actual = view_cart(Ref),
-    Expected = Actual,
-    timer:sleep(300),
-    stop(), timer:sleep(250).
-    
-test() ->
-    test_start_stop(),
-    test_empty_view(),
-    test_minimal_order(),
-    test_invalid_order(),
-    test_succeeded.
-
-test_empty_view() ->
-    io:format("~nTEST: empty_view~n"),
-    start(),
-    {ok, Ref} = start_link(fred),
-    Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,0}],0},
-    Actual = view_cart(Ref),
-    compare_cart(Expected, Actual),
-    timer:sleep(300),
-    stop(), timer:sleep(250).
-
-
-test_invalid_order() ->
-    io:format("~nTEST: minimal_order~n"),
-    start(),
-    {ok, Ref} = start_link(fred),
-    donuts(Ref,2),
-    invalid_order(Ref, 2),
-    Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,2}],100},
-    Actual = view_cart(Ref),
-    io:format("View cart shows: ~p~n", [Actual]),
-    compare_cart(Expected, Actual),
-    timer:sleep(1000),
-    stop(), timer:sleep(250).    
-    
-compare_cart({E1, E2}, {A1, A2}) ->
-    A1Sorted = lists:sort(A1),
-    E1Sorted = lists:sort(E1),
-    A1 = E1,
-    E2 = A2.
 

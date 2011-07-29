@@ -1,7 +1,19 @@
 %%% cart2
-%%% The resilient version of cart.
-%%% A collection of order items assocated with a given
-%%% transaction id, terminated by a `buy' action.
+%%% The resilient version of the shopping cart.
+
+%%% On creation with a unique reference ID the cart attempts to
+%%% register itself.  If that succeeds then it is the master,
+%%% otherwise it's the slave.  Slave's link to their master and if
+%%% they detect abnormal termination they register their own PID
+%%% against the reference ID.
+%%%
+%%% State is shared between master and slave through shared knowledge
+%%% of the name of the DETS tables in use. One of these tables will
+%%% contain persisted credit card data.  This needs to be secured as
+%%% otherwise another erlang process can simple recover that data.
+
+
+
 
 -module(cart2).
 
@@ -9,34 +21,41 @@
 
 
 %% Private interfaces
--export([init/4]).
-
-
+-export([init/3]).
 
 
 %% Implementation
 
-%% init - The cart is initialised with a price list `Prices' a list
+%% init/3 - The cart is initialised with a price list `Prices' a list
 %% [{Item,Price}] defining all the items which may be purchased.  This
 %% allows new items to be added without having to modify the core of
 %% the cart application though the requisite API helper functions will
-%% have to be added.  `Customer' and `Order' contain file names
-%% to be used for persistent staorage of user and order data
-%% respectively.
+%% have to be added.  `Ref' is a unique ID for this transaction.
+
+init(UserName, Prices, Ref) ->
+    ProcName = list_to_atom(registered_name(Ref)),
+    Customer = string_from_ref("Customer-",Ref),
+    Order = string_from_ref("User-", Ref),
+    Names = {ProcName, Customer, Order}
+	 
+    case register(ProcName, self()) of
+    	true -> 
+    	    init(UserName, Prices, Names, master);
+    	_Else ->
+    	    init(UserName, Prices, Names, slave)
+    end.
 
 
+%% init/4 - master variant sets up initial state in the DETS tables,
+%% slave variant just opens them.
+%% Slave variant will link to the master so it can take over in the event 
+%% of termination.
 
-%% init - start variant sets up initial state in the DETS tables,
-%% restart variant just opens them.
-%%
-%% OrderLines format.  Now that we're using a DETS table, which
-%% defaults to a set, the order lines format of {Item, Subtotal} is
-%% wholly justified.
 
-init(UserName, Prices, Tables, start) ->
-     io:format("cart2 (~p) - initialising with price list ~p~n", 
-	      [UserName, Prices]),
-    [Customer, Order] = Tables,
+init(UserName, Prices, Names, master) ->
+     io:format("cart2 (~p) - initialising master~n", 
+	      [self()]),
+    {_ProcName,Customer, Order} = Names,
 
     InitialOrderLines = [ {Item, 0}||{Item, _Price} <- Prices],
     {ok, Order} = dets:open_file(Order, []),
@@ -45,14 +64,28 @@ init(UserName, Prices, Tables, start) ->
 
     {ok, Customer} = dets:open_file(Customer, []),
     dets:insert(Customer, {name, UserName}),
-    loop(Tables,Prices);
+    loop([Customer,Order],Prices);
 
-init(_UserName, Prices, Tables, restart) ->
-    io:format("cart2: restarting ~p~n", [self()]),
-    [Customer, Order] = Tables,
+init(_UserName, Prices, Names, slave) ->
+    io:format("cart2 (~p): initialising slave~n", [self()]),
+    {ProcName ,Customer, Order} = Names,
+    case whereis(ProcName) of
+	undefined ->
+	    %%	Master died before we got here, attempt a takeover.
+	    %%	Race with supervisor starting another cart.
+	    case register(ProcName, self()) of
+		true -> io:format("cart2 (~p): successful take over~n", [self()]);
+		_Else -> io:format("cart2 (~p): remaining slave~n", [self()])
+	    end;
+	Pid ->
+	    %% Because we're trapping exits the following link is guaranteed
+	    %% to succeed, but we may later receive a noproc EXIT reason.
+	    true = link(Pid)
+    end,
+
     {ok, Customer} = dets:open_file(Customer, []),
     {ok, Order} = dets:open_file(Order, []),
-    loop(Tables, Prices).
+    loop([Customer, Order], Prices).
 
 
 
@@ -226,6 +259,10 @@ close(Tables) ->
 		 
 
 	    
-    
+registered_name(Ref) ->
+    string_from_ref("Cart-", Ref).
+
+string_from_ref(Prefix, Ref) ->
+    lists:flatten( io_lib:format("~p~p", [Prefix, Ref])).
 
 
