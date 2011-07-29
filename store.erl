@@ -89,18 +89,25 @@ send(Sync, RefId, Message) ->
 %% TODO need to add a unique marker to message as they may pass in flight
 
 send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
-    ?MODULE ! {Sync, self(), RefId, Message},
-    io:format("Sent ~p, ~p~n", [Sync, Message]),
-    receive
-	 
-	{reply, Reply} ->
-	    Reply
-    after
-	500 ->
-	    io:format("Retrying~n"),
-	    send(Sync,RefId, Message, RetryCount +1)
-		
+    try 
+	RefId ! {Sync, self(), Message} of 
+	_ ->
+	    io:format("Sent ~p, ~p~n", [Sync, Message]),
+	    receive
+		{reply, Reply} -> Reply
+	    after
+		500 -> io:format("Retrying~n"),
+		    send(Sync,RefId, Message, RetryCount +1)
+	    end
+    catch
+	%% Process not yet registered, pause a bit and retry
+	error: Error  ->
+	    io:format("Send error: ~p, ~p~n ", [Error, RefId])
+		,
+	    timer:sleep(100),
+	    send(Sync, RefId, Message, RetryCount +1)
     end.
+
 
     
 send(Message) ->
@@ -133,11 +140,15 @@ loop(Prices, State) ->
 				      io:format("Stopping ~p~n", [CartPid]),
 				      CartPid ! {stop, self() } end, State),
 	    Pid ! {reply,ok};
-	{Pid, {start_link, UserName} } -> % duplicate username?
-	    Ref = make_ref(),
-	    Pid ! {reply, {ok, Ref}},
-	    CartPid = new_cart(UserName, Prices, Ref),
-	    loop(Prices, [{UserName, Ref, CartPid} |State]);
+	{Pid, {start_link, UserName} } ->
+	    Ref = cart2:registered_name(make_ref()),
+	    Pid ! {reply, {ok, list_to_atom(Ref)}},
+	    %% Spin off two carts, one to be master, one slave.
+	    %% TODO, need to externalise this.
+	    MasterPid = new_cart(UserName, Prices, Ref),
+	    SlavePid = new_cart(UserName, Prices, Ref),
+	    loop(Prices, [{UserName, Ref, MasterPid} |
+			  [{UserName, Ref, SlavePid} |State]]);
 	{'EXIT', Pid, Reason} ->
 	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]),
 	    {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
@@ -147,8 +158,9 @@ loop(Prices, State) ->
 
 	{Sync, Pid, Ref, Message} ->
 	    io:format("store received ~p for ~p~n", [Message, Ref]),
-	    {_UserName, Ref, CartPid} = lists:keyfind(Ref, 2, State),
-	    CartPid ! {Sync, Pid, Message},
+	    Ref!{Sync,Pid,Message},
+%	    {_UserName, Ref, CartPid} = lists:keyfind(Ref, 2, State),
+%	    CartPid ! {Sync, Pid, Message},
 	    loop(Prices,State);
 	Unknown ->
 	    io:format("Store received unexpected message: ~p~n", [Unknown])
@@ -157,7 +169,7 @@ loop(Prices, State) ->
 
     
 new_cart(Name, Prices, Ref) ->
-    spawn_link(cart2, init, [Name, Prices, Ref]),
+    spawn_link(cart2, init, [Name, Prices, Ref]).
 
 
 

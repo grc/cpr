@@ -23,6 +23,8 @@
 %% Private interfaces
 -export([init/3]).
 
+-export([registered_name/1, string_from_ref/2]).
+
 
 %% Implementation
 
@@ -33,15 +35,14 @@
 %% have to be added.  `Ref' is a unique ID for this transaction.
 
 init(UserName, Prices, Ref) ->
-    ProcName = list_to_atom(registered_name(Ref)),
+    ProcName = list_to_atom(Ref),
     Customer = string_from_ref("Customer-",Ref),
     Order = string_from_ref("User-", Ref),
-    Names = {ProcName, Customer, Order}
-	 
-    case register(ProcName, self()) of
-    	true -> 
-    	    init(UserName, Prices, Names, master);
-    	_Else ->
+    Names = {ProcName, Customer, Order},
+    try register(ProcName, self()) of
+    	true -> init(UserName, Prices, Names, master)
+    catch
+    	error:_Error ->
     	    init(UserName, Prices, Names, slave)
     end.
 
@@ -56,40 +57,52 @@ init(UserName, Prices, Names, master) ->
      io:format("cart2 (~p) - initialising master~n", 
 	      [self()]),
     {_ProcName,Customer, Order} = Names,
+    Tables = [Customer,Order],
+    open(Tables),
+
+    dets:insert(Customer, {name, UserName}),
 
     InitialOrderLines = [ {Item, 0}||{Item, _Price} <- Prices],
-    {ok, Order} = dets:open_file(Order, []),
     dets:insert(Order, InitialOrderLines),
 
-
-    {ok, Customer} = dets:open_file(Customer, []),
-    dets:insert(Customer, {name, UserName}),
-    loop([Customer,Order],Prices);
+    loop(Tables,Prices);
 
 init(_UserName, Prices, Names, slave) ->
     io:format("cart2 (~p): initialising slave~n", [self()]),
     {ProcName ,Customer, Order} = Names,
+    Tables = [Customer,Order],
+    open(Tables),
+    process_flag(trap_exit, true),
     case whereis(ProcName) of
 	undefined ->
 	    %%	Master died before we got here, attempt a takeover.
-	    %%	Race with supervisor starting another cart.
-	    case register(ProcName, self()) of
-		true -> io:format("cart2 (~p): successful take over~n", [self()]);
-		_Else -> io:format("cart2 (~p): remaining slave~n", [self()])
-	    end;
+	    takeover(ProcName);
 	Pid ->
-	    %% Because we're trapping exits the following link is guaranteed
-	    %% to succeed, but we may later receive a noproc EXIT reason.
+	    %% Because we're trapping exits the following link is
+	    %% guaranteed to succeed, but we may later receive a
+	    %% noproc EXIT reason which we can had using our normal
+	    %% take over.
 	    true = link(Pid)
     end,
 
-    {ok, Customer} = dets:open_file(Customer, []),
-    {ok, Order} = dets:open_file(Order, []),
     loop([Customer, Order], Prices).
 
 
 
+takeover(ProcName) ->
+    %%	Race condition with supervisor starting another cart so be prepared
+    %%	for register to fail:
 
+    try register(ProcName, self()) of
+	true -> 
+	    io:format("cart2 (~p): successful take over~n", [self()]),
+	    %% There's no one to watch so don't need to trap exits any
+	    %% more.
+	    process_flag(trap_exit, false)
+    catch	
+	error:_Error -> io:format("cart2 (~p): remaining slave~n", [self()])
+    end.
+    
 
 
 loop( Tables, Prices) ->
@@ -246,13 +259,23 @@ credit_details(Table) ->
 
 
 
+open(Tables) ->
+    lists:map(fun(T) ->
+		      {ok, T} = dets:open_file(T, [])
+	      end,
+	      Tables).
+
 %%% close - close the DETS tables passed in, then delete the
 %%% underlying file.
 close(Tables) ->
     lists:map(fun (T) ->
-		      io:format("Cart: closing table ~p~n", [T]),
 		      ok = dets:close(T),
-		      ok = file:delete(T) end, Tables).
+		      %% Don't check the return value of delete as
+		      %% there is no guarantee the file is actually
+		      %% created: empty tables may not be written to
+		      %% disk.
+		      file:delete(T) end, 
+	      Tables).
 
 
 			    

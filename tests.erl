@@ -1,6 +1,6 @@
 -module(tests).
 -export([reliable/0, unreliable/0]).
--export([start_stop/1, empty_view/1]).
+-export([start_stop/1, empty_view/1, minimal_order/1, invalid_order/1]).
 
 reliable() ->
     generic(store),
@@ -54,7 +54,7 @@ empty_view(M) ->
 
 
 invalid_order(M) ->
-    io:format("~nTEST: minimal_order~n"),
+    io:format("~nTEST: invalid_order~n"),
     M:start(),
     {ok, Ref} = M:start_link(fred),
     M:donuts(Ref,2),
