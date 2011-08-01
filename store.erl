@@ -102,7 +102,7 @@ send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
     catch
 	%% Process not yet registered, pause a bit and retry
 	error: Error  ->
-	    io:format("Send error: ~p, ~p~n ", [Error, RefId])
+	    io:format("Send error: ~p, ~p, ~p~n ", [Error, RefId, Message])
 		,
 	    timer:sleep(100),
 	    send(Sync, RefId, Message, RetryCount +1)
@@ -146,13 +146,19 @@ loop(Prices, State) ->
 	    %% Spin off two carts, one to be master, one slave.
 	    %% TODO, need to externalise this.
 	    MasterPid = new_cart(UserName, Prices, Ref),
+	    %% TODO - spawn slave off on a different node.
 	    SlavePid = new_cart(UserName, Prices, Ref),
 	    loop(Prices, [{UserName, Ref, MasterPid} |
 			  [{UserName, Ref, SlavePid} |State]]);
+	{'EXIT', Pid, normal} ->
+	    io:format("store: ~p exited normally~n", [Pid]),
+	    loop(Prices, lists:keydelete(Pid, 3, State));
+
 	{'EXIT', Pid, Reason} ->
 	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]),
 	    {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
 	    NewPid =  new_cart(UserName, Prices, Ref),
+	    io:format("store: spawning new cart ~p~n", [NewPid]),
 	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
 	    loop(Prices,NewState);
 

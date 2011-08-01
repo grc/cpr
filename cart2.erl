@@ -15,6 +15,9 @@
 
 
 
+
+%% TODO Use monitor to watch the primary cart.
+
 -module(cart2).
 
 
@@ -72,19 +75,12 @@ init(_UserName, Prices, Names, slave) ->
     {ProcName ,Customer, Order} = Names,
     Tables = [Customer,Order],
     open(Tables),
-    process_flag(trap_exit, true),
-    case whereis(ProcName) of
-	undefined ->
-	    %%	Master died before we got here, attempt a takeover.
-	    takeover(ProcName);
-	Pid ->
-	    %% Because we're trapping exits the following link is
-	    %% guaranteed to succeed, but we may later receive a
-	    %% noproc EXIT reason which we can had using our normal
-	    %% take over.
-	    true = link(Pid)
-    end,
-
+    
+    % start monitoring the master.  If it has already died we'll still
+    % get a DOWN message.  Use monitor instead of link as we want an
+    % asymmetrical connection.
+    monitor(process, ProcName),
+    
     loop([Customer, Order], Prices).
 
 
@@ -95,12 +91,13 @@ takeover(ProcName) ->
 
     try register(ProcName, self()) of
 	true -> 
-	    io:format("cart2 (~p): successful take over~n", [self()]),
-	    %% There's no one to watch so don't need to trap exits any
-	    %% more.
-	    process_flag(trap_exit, false)
+	    io:format("cart2 (~p): successful take over~n", [self()])
+	    % Don't need to demonitor as that happens automatically
+	    % when the DOWN message is sent.
+
     catch	
-	error:_Error -> io:format("cart2 (~p): remaining slave~n", [self()])
+	error:_Error -> io:format("cart2 (~p): remaining slave~n", [self()]),
+			monitor(process,ProcName)
     end.
     
 
@@ -108,6 +105,10 @@ takeover(ProcName) ->
 loop( Tables, Prices) ->
     io:format("cart {~p) looping~n", [self()]),
     receive
+	{'DOWN', _Ref, process, {ProcName, _Node}, Info} ->
+	    io:format("Master down, ~p~n", [Info]),
+	    takeover(ProcName),
+	    loop(Tables, Prices);
 	{stop, Pid} -> 
 	    io:format("Cart ~p: stopping~n", [self()]),
 	    close(Tables),
