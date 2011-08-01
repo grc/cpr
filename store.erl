@@ -157,17 +157,11 @@ loop(Prices, State) ->
 	{'EXIT', Pid, Reason} ->
 	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]),
 	    {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
-	    NewPid =  new_cart(UserName, Prices, Ref),
+	    NewPid =  restart_cart(UserName, Prices, Ref),
 	    io:format("store: spawning new cart ~p~n", [NewPid]),
 	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
 	    loop(Prices,NewState);
 
-	{Sync, Pid, Ref, Message} ->
-	    io:format("store received ~p for ~p~n", [Message, Ref]),
-	    Ref!{Sync,Pid,Message},
-%	    {_UserName, Ref, CartPid} = lists:keyfind(Ref, 2, State),
-%	    CartPid ! {Sync, Pid, Message},
-	    loop(Prices,State);
 	Unknown ->
 	    io:format("Store received unexpected message: ~p~n", [Unknown])
 	
@@ -178,6 +172,10 @@ new_cart(Name, Prices, Ref) ->
     spawn_link(cart2, init, [Name, Prices, Ref]).
 
 
+restart_cart(Name, Prices, Ref) ->
+    spawn_link(cart2, init, [Name, Prices, Ref, restart]).
+
+
 
 
     
@@ -185,7 +183,7 @@ new_cart(Name, Prices, Ref) ->
 
 
 
-%% Test harness
+
 
 
     

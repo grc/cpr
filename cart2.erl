@@ -24,7 +24,7 @@
 
 
 %% Private interfaces
--export([init/3]).
+-export([init/3, init/4]).
 
 -export([registered_name/1, string_from_ref/2]).
 
@@ -37,6 +37,9 @@
 %% the cart application though the requisite API helper functions will
 %% have to be added.  `Ref' is a unique ID for this transaction.
 
+
+
+%% THis fails if a cart is restarted and comes up master: we blank the database.
 init(UserName, Prices, Ref) ->
     ProcName = list_to_atom(Ref),
     Customer = string_from_ref("Customer-",Ref),
@@ -48,6 +51,16 @@ init(UserName, Prices, Ref) ->
     	error:_Error ->
     	    init(UserName, Prices, Names, slave)
     end.
+
+init(UserName, Prices, Ref, restart) ->
+    ProcName = list_to_atom(Ref),
+    Customer = string_from_ref("Customer-",Ref),
+    Order = string_from_ref("User-", Ref),
+    Names = {ProcName, Customer, Order},
+    init(UserName, Prices, Names, slave);
+
+
+
 
 
 %% init/4 - master variant sets up initial state in the DETS tables,
