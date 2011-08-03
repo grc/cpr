@@ -7,6 +7,11 @@
 %%% themselves their allowing clients to communicate directly with
 %%% them and slave carts to monitor them for continued existence.
 %%%
+%%% The use of the global registry initialy raised performancd
+%%% concerns.  However given that the global registry uses a
+%%% gen_server instance backed by an ets table it will scale better
+%%% than any home brew effort attempted for this assignment.
+%%%
 %%% State is shared between master and slave through shared knowledge
 %%% of the name of the DETS tables in use. One of these tables will
 %%% contain persisted credit card data.  This needs to be secured as
@@ -42,15 +47,16 @@
 % Interface definitions
 
 
+%% start/0 creates an instance of the supervisor on the current node.
 start() -> 
     Prices = [{donuts,50}, {macarons,175},{danish,100},{cupcakes,75}],
-    register(?MODULE, spawn(store, init, [Prices])).
+    global:register_name(?MODULE, spawn(store, init, [Prices])).
 
 stop() ->
     send(stop).
 
 start_link(UserName) ->
-    case whereis(?MODULE) of % Ensure we've started the supervisor
+    case global:whereis_name(?MODULE) of % Ensure we've started the supervisor
 	undefined ->
 	    start();
 	_Else -> ok
@@ -115,7 +121,8 @@ send(Sync, RefId, Message) ->
 
 send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
     try 
-	RefId ! {Sync, self(), Message} of 
+	io:format("sending to ~p at ~p~n", [RefId, global:whereis_name(RefId)]),
+	global:send(RefId, {Sync, self(), Message}) of 
 	_ ->
 	    io:format("Sent ~p, ~p~n", [Sync, Message]),
 	    receive
@@ -126,9 +133,8 @@ send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
 	    end
     catch
 	%% Process not yet registered, pause a bit and retry
-	error: Error  ->
-	    io:format("Send error: ~p, ~p, ~p~n ", [Error, RefId, Message])
-		,
+	exit: Error  ->
+	    io:format("Send error: ~p, ~p, ~p~n ", [Error, RefId, Message]),
 	    timer:sleep(100),
 	    send(Sync, RefId, Message, RetryCount +1)
     end.
@@ -136,7 +142,7 @@ send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
 
     
 send(Message) ->
-    ?MODULE ! {self(),Message},
+    global:send(?MODULE , {self(),Message}),
     io:format("Sent ~p~n", [Message]),
     receive
 	{reply, Reply} ->
@@ -173,11 +179,10 @@ init(UserName, Prices, Ref) ->
     Customer = string_from_ref("Customer-",Ref),
     Order = string_from_ref("User-", Ref),
     Names = {ProcName, Customer, Order},
-    try register(ProcName, self()) of
-    	true -> init(UserName, Prices, Names, master)
-    catch
-    	error:_Error ->
-    	    init(UserName, Prices, Names, slave)
+    case global:register_name(ProcName, self()) of
+    	yes -> init(UserName, Prices, Names, master);
+
+    	no  -> init(UserName, Prices, Names, slave)
     end.
 
 init(UserName, Prices, Ref, restart) ->
@@ -198,9 +203,10 @@ init(UserName, Prices, Ref, restart) ->
 
 
 init(UserName, Prices, Names, master) ->
-     io:format("cart2 (~p) - initialising master~n", 
-	      [self()]),
-    {_ProcName,Customer, Order} = Names,
+    {ProcName,Customer, Order} = Names,
+    io:format("cart2 (~p) - initialising master for ~p~n", 
+	      [self(),ProcName]),
+    
     Tables = [Customer,Order],
     open(Tables),
 
@@ -209,7 +215,7 @@ init(UserName, Prices, Names, master) ->
     InitialOrderLines = [ {Item, 0}||{Item, _Price} <- Prices],
     dets:insert(Order, InitialOrderLines),
 
-    loop(Tables,Prices);
+    loop(ProcName, Tables,Prices);
 
 init(_UserName, Prices, Names, slave) ->
     io:format("cart2 (~p): initialising slave~n", [self()]),
@@ -220,36 +226,37 @@ init(_UserName, Prices, Names, slave) ->
     % start monitoring the master.  If it has already died we'll still
     % get a DOWN message.  Use monitor instead of link as we want an
     % asymmetrical connection.
-    monitor(process, ProcName),
+    monitor(process, global:whereis_name(ProcName)),
     
-    loop([Customer, Order], Prices).
+    loop(ProcName, [Customer, Order], Prices).
 
 
 
 takeover(ProcName) ->
     %%	Race condition with supervisor starting another cart so be prepared
     %%	for register to fail:
-
-    try register(ProcName, self()) of
-	true -> 
-	    io:format("cart2 (~p): successful take over~n", [self()])
+    io:format("takeover attempt: ~p~n",[global:whereis_name(ProcName)]),
+    case global:register_name(ProcName, self()) of
+	yes -> 
+	    io:format("cart2 (~p): successful take over of ~p~n", [self(), ProcName]);
 	    % Don't need to demonitor as that happens automatically
 	    % when the DOWN message is sent.
 
-    catch	
-	error:_Error -> io:format("cart2 (~p): remaining slave~n", [self()]),
-			monitor(process,ProcName)
+	no -> io:format("cart2 (~p): remaining slave~n", [self()]),
+	      monitor(process,global:whereis_name(ProcName))
     end.
     
 
 
-loop( Tables, Prices) ->
+loop(ProcName, Tables, Prices) ->
     io:format("cart {~p) looping~n", [self()]),
     receive
-	{'DOWN', _Ref, process, {ProcName, _Node}, Info} ->
-	    io:format("Master down, ~p~n", [Info]),
+
+	% TODO Don't use the Procname passed OOB in the monitor response: its coming up undefined!
+	{'DOWN', _Ref, process, {_ProcName, _Node}, Info} ->
+	    io:format("Cart ~p: Master down, ProcName ~p, Info: ~p~n", [self(), ProcName, Info]),
 	    takeover(ProcName),
-	    loop(Tables, Prices);
+	    loop(ProcName,Tables, Prices);
 	{stop, Pid} -> 
 	    io:format("Cart ~p: stopping~n", [self()]),
 	    close(Tables),
@@ -258,13 +265,13 @@ loop( Tables, Prices) ->
 	    reply(Pid,ok),
 	    [_Customer, Order] = Tables,
 	    ok = request(Message, Order),
-	    loop(Tables, Prices);
+	    loop(ProcName, Tables, Prices);
 	{sync_request, Pid, Message} ->
 	    io:format("received sync_request: ~p~n",[Message]),
 	    case sync_request(Message, Tables, Prices) of 
 		{ok, Response} ->
 		    reply(Pid,Response),
-		    loop(Tables, Prices);
+		    loop(ProcName,Tables, Prices);
 		{stop, Response} ->
 		    %% We're going to go away so need to tidy up our
 		    %% persistent storage.
@@ -412,8 +419,8 @@ open(Tables) ->
 close(Tables) ->
     lists:map(fun (T) ->
 		      ok = dets:close(T),
-		      %% Don't check the return value of delete as
-		      %% there is no guarantee the file is actually
+		      %% Don't check the return value of file:delete
+		      %% as there is no guarantee the file is actually
 		      %% created: empty tables may not be written to
 		      %% disk.
 		      file:delete(T) end, 
