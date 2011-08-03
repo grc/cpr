@@ -1,16 +1,22 @@
 %%% cart2
 %%% The resilient version of the shopping cart.
 
-%%% On creation with a unique reference ID the cart attempts to
-%%% register itself.  If that succeeds then it is the master,
-%%% otherwise it's the slave.  Slave's link to their master and if
-%%% they detect abnormal termination they register their own PID
-%%% against the reference ID.
+%%% Distributed communication is based on the `global' module.  The
+%%% supervisor, `store' is registered in the global database so that it is
+%%% accessible from all nodes. Individual master carts also register
+%%% themselves their allowing clients to communicate directly with
+%%% them and slave carts to monitor them for continued existence.
 %%%
 %%% State is shared between master and slave through shared knowledge
 %%% of the name of the DETS tables in use. One of these tables will
 %%% contain persisted credit card data.  This needs to be secured as
 %%% otherwise another erlang process can simple recover that data.
+%%% Use of the DETS table leaves us vulnerable to network partitions;
+%%% this is discussed in the written portion of the submission.
+%%%
+%%% A supervisor process is responsible for spawning the carts and
+%%% keeping them alive whilst necessary.
+%%%
 
 
 -module(cart2).

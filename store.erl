@@ -1,8 +1,6 @@
 %%% store
 %%%
-%%% Provides a singe point of contact for API calls, farming them out
-%%% to the relevant cart instance.  Should a cart process terminate, a
-%%% new one will be started in its place.
+
 
 -module(store).
 
@@ -24,7 +22,7 @@ loop(Prices, State) ->
     receive
 	{Pid, stop} ->
 	    io:format("store - received stop from ~p~n", [Pid]),
-	    %% Stop to all our carts:
+	    %% Stop all our carts:
 	    lists:foreach(fun ({_Name, _Ref, CartPid}) ->
 				      io:format("Stopping ~p~n", [CartPid]),
 				      CartPid ! {stop, self() } end, State),
