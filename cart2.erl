@@ -38,8 +38,12 @@
 %% have to be added.  `Ref' is a unique ID for this transaction.
 
 
+%% init variants:
+%% 
+%% init/3 is used to create a new cart.  An attempt to register the
+%% process defines the master at startup and hence the process
+%% responsible for initialising the order table.
 
-%% THis fails if a cart is restarted and comes up master: we blank the database.
 init(UserName, Prices, Ref) ->
     ProcName = list_to_atom(Ref),
     Customer = string_from_ref("Customer-",Ref),

@@ -23,7 +23,7 @@ generic(Module) ->
 
 start_stop(M) ->
     io:format("~nTEST: start_stop~n"),
-    M:start(),
+    %M:start(),
     {ok, _Ref} = M:start_link(benny),
     % TODO delay shouldn't be needed
     timer:sleep(500),
@@ -32,7 +32,7 @@ start_stop(M) ->
 
 minimal_order(M) ->
     io:format("~nTEST: minimal_order~n"),
-    M:start(),
+    %M:start(),
     {ok, Ref} = M:start_link(fred),
     ok = M:donuts(Ref,2),
     Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,2}],100},
@@ -44,7 +44,7 @@ minimal_order(M) ->
 
 empty_view(M) ->
     io:format("~nTEST: empty_view~n"),
-    M:start(),
+    %M:start(),
     {ok, Ref} = M:start_link(fred),
     Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,0}],0},
     Actual = M:view_cart(Ref),
@@ -55,7 +55,7 @@ empty_view(M) ->
 
 invalid_order(M) ->
     io:format("~nTEST: invalid_order~n"),
-    M:start(),
+    %M:start(),
     {ok, Ref} = M:start_link(fred),
     M:donuts(Ref,2),
     M:invalid_order(Ref, 2),

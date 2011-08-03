@@ -30,7 +30,12 @@ stop() ->
     send(stop).
 
 start_link(UserName) ->
-    % TODO - needs to handle unstarted server
+    case whereis(?MODULE) of % Ensure we've started the supervisor
+	undefined ->
+	    start();
+	_Else -> ok
+    end,
+    
     send({start_link, UserName}).
 
 
