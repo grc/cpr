@@ -13,11 +13,6 @@
 %%% otherwise another erlang process can simple recover that data.
 
 
-
-
-
-%% TODO Use monitor to watch the primary cart.
-
 -module(cart2).
 
 
@@ -27,6 +22,129 @@
 -export([init/3, init/4]).
 
 -export([registered_name/1, string_from_ref/2]).
+
+% Public interface
+-export([start/0, stop/0]).
+
+-export([start_link/1, donuts/2, macarons/2, danish/2, cupcakes/2, view_cart/1,
+	billing_address/2, credit_card/3, buy/1]).
+
+% Testing interface
+-export([invalid_order/2]).
+
+
+% Interface definitions
+
+
+start() -> 
+    Prices = [{donuts,50}, {macarons,175},{danish,100},{cupcakes,75}],
+    register(?MODULE, spawn(store, init, [Prices])).
+
+stop() ->
+    send(stop).
+
+start_link(UserName) ->
+    case whereis(?MODULE) of % Ensure we've started the supervisor
+	undefined ->
+	    start();
+	_Else -> ok
+    end,
+    
+    send({start_link, UserName}).
+
+
+donuts(ReferenceId, N) -> 
+    async_send(ReferenceId, {order, donuts, N}).
+
+macarons(ReferenceId, N) -> 
+    async_send(ReferenceId, {order, macarons, N}).
+
+danish(ReferenceId, N) -> 
+    async_send(ReferenceId, {order, danish, N}).
+
+cupcakes(ReferenceId, N) -> 
+    async_send(ReferenceId, {order, cupcakes, N}).
+
+%% Order a non existent item for testing purposes
+invalid_order(ReferenceId, N) ->
+    async_send(ReferenceId, {order, green_cheese, N}).
+
+view_cart(ReferenceId) ->
+    sync_send(ReferenceId, view).
+    
+billing_address(ReferenceId, Address) ->
+    sync_send(ReferenceId, {address, Address}).
+
+credit_card(ReferenceId, Number, Date) ->
+    sync_send(ReferenceId,{credit, Number, Date}).
+
+buy(ReferenceId) ->
+    sync_send(ReferenceId, buy).
+
+%% API Impl
+
+async_send(RefId, Message) ->
+    send(request, RefId, Message).
+
+sync_send(RefId, Message) ->
+    send(sync_request, RefId, Message).
+
+
+%%% Time outs on send: The API is intended to hide the fact that a
+%%% server might die and be restarted.  A race condition exists where
+%%% one message might crash the server and a second be in flight
+%%% before the supervisor is notified of the death.  In that case the
+%%% message will be lost, so a time out and retry mechanism is
+%%% required.
+
+
+
+send(Sync, RefId, Message) ->
+    send(Sync, RefId, Message, 0).
+
+
+%% TODO file static values
+
+%% TODO need to add a unique marker to message as they may pass in flight
+
+send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
+    try 
+	RefId ! {Sync, self(), Message} of 
+	_ ->
+	    io:format("Sent ~p, ~p~n", [Sync, Message]),
+	    receive
+		{reply, Reply} -> Reply
+	    after
+		500 -> io:format("Retrying~n"),
+		    send(Sync,RefId, Message, RetryCount +1)
+	    end
+    catch
+	%% Process not yet registered, pause a bit and retry
+	error: Error  ->
+	    io:format("Send error: ~p, ~p, ~p~n ", [Error, RefId, Message])
+		,
+	    timer:sleep(100),
+	    send(Sync, RefId, Message, RetryCount +1)
+    end.
+
+
+    
+send(Message) ->
+    ?MODULE ! {self(),Message},
+    io:format("Sent ~p~n", [Message]),
+    receive
+	{reply, Reply} ->
+	    Reply
+    end.
+    
+
+
+
+
+
+
+
+
 
 
 %% Implementation

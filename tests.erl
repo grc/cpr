@@ -3,8 +3,8 @@
 -export([start_stop/1, empty_view/1, minimal_order/1, invalid_order/1]).
 
 reliable() ->
-    generic(store),
-    invalid_order(store).
+    generic(cart2),
+    invalid_order(cart2).
 
 unreliable() ->
     generic(cart).
