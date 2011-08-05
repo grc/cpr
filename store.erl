@@ -27,16 +27,19 @@ loop(Prices, State) ->
 				      io:format("Stopping ~p~n", [CartPid]),
 				      CartPid ! {stop, self() } end, State),
 	    Pid ! {reply,ok};
-	{Pid, {start_link, UserName} } ->
-	    Ref = cart2:registered_name(make_ref()),
-	    Pid ! {reply, {ok, list_to_atom(Ref)}},
-	    %% Spin off two carts, one to be master, one slave.
-	    %% TODO, need to externalise this.
-	    MasterPid = new_cart(UserName, Prices, Ref),
-	    %% TODO - spawn slave off on a different node.
-	    SlavePid = new_cart(UserName, Prices, Ref),
-	    loop(Prices, [{UserName, Ref, MasterPid} |
-			  [{UserName, Ref, SlavePid} |State]]);
+	{Pid, {start_link, UserName, Node }} ->
+	    Ref = list_to_atom(cart2:registered_name(make_ref())),
+	    Pid ! {reply, {ok, Ref}},
+	    NewPid = new_cart(UserName, Prices, Ref, Node),
+	    loop(Prices, [{UserName, Ref, NewPid} |State]);
+
+	{Pid, {start_backup, Ref, Node}} ->
+	    io:format("State: ~p, Ref: ~p~n", [State, Ref]),
+	    {UserName, Ref, _Pid} = lists:keyfind(Ref, 2, State),
+	    Pid ! {reply, {ok, Ref}},
+	    NewPid = new_cart(UserName, Prices, Ref, Node),
+	    loop(Prices, [{UserName, Ref, NewPid}|State]);
+
 	{'EXIT', Pid, normal} ->
 	    io:format("store: ~p exited normally~n", [Pid]),
 	    loop(Prices, lists:keydelete(Pid, 3, State));
@@ -55,9 +58,13 @@ loop(Prices, State) ->
     end.
 
     
-new_cart(Name, Prices, Ref) ->
-    spawn_link(cart2, init, [Name, Prices, Ref]).
+new_cart(Name, Prices, Ref, Node) ->
+    spawn_link(Node, cart2, init, [Name, Prices, Ref]).
 
+
+
+%% restart_cart: we don't allow the caller to choose a node as 
+%% they'd probably specify the original and taht may have gone away.
 
 restart_cart(Name, Prices, Ref) ->
     spawn_link(cart2, init, [Name, Prices, Ref, restart]).

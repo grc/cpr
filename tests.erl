@@ -55,8 +55,9 @@ empty_view(M) ->
 
 invalid_order(M) ->
     io:format("~nTEST: invalid_order~n"),
-    %M:start(),
+
     {ok, Ref} = M:start_link(fred),
+    {ok, Ref} = M:start_backup(Ref),
     M:donuts(Ref,2),
     M:invalid_order(Ref, 2),
     Expected = {[{macarons,0},{cupcakes,0},{danish,0},{donuts,2}],100},

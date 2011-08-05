@@ -37,8 +37,9 @@
 % Public interface
 -export([start/0, stop/0]).
 
--export([start_link/1, donuts/2, macarons/2, danish/2, cupcakes/2, view_cart/1,
-	billing_address/2, credit_card/3, buy/1]).
+-export([start_link/1, start_backup/1, 
+	 donuts/2, macarons/2, danish/2, cupcakes/2, 
+	 view_cart/1, billing_address/2, credit_card/3, buy/1]).
 
 % Testing interface
 -export([invalid_order/2]).
@@ -62,8 +63,13 @@ start_link(UserName) ->
 	_Else -> ok
     end,
     
-    send({start_link, UserName}).
+    send({start_link, UserName, node()}).
 
+% start_backup: creates a hot standby cart for the transaction
+% identified by `Ref'.  The cart will bre created on the node from
+% which this call was made.
+start_backup(Ref)->
+    send({start_backup, Ref, node()}).
 
 donuts(ReferenceId, N) -> 
     async_send(ReferenceId, {order, donuts, N}).
@@ -175,7 +181,7 @@ send(Message) ->
 %% responsible for initialising the order table.
 
 init(UserName, Prices, Ref) ->
-    ProcName = list_to_atom(Ref),
+    ProcName = Ref,
     Customer = string_from_ref("Customer-",Ref),
     Order = string_from_ref("User-", Ref),
     Names = {ProcName, Customer, Order},
@@ -186,7 +192,7 @@ init(UserName, Prices, Ref) ->
     end.
 
 init(UserName, Prices, Ref, restart) ->
-    ProcName = list_to_atom(Ref),
+    ProcName = Ref,
     Customer = string_from_ref("Customer-",Ref),
     Order = string_from_ref("User-", Ref),
     Names = {ProcName, Customer, Order},
@@ -435,6 +441,6 @@ registered_name(Ref) ->
     string_from_ref("Cart-", Ref).
 
 string_from_ref(Prefix, Ref) ->
-    lists:flatten( io_lib:format("~p~p", [Prefix, Ref])).
+    lists:flatten( io_lib:format("~s~w", [Prefix, Ref])).
 
 
