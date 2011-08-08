@@ -1,5 +1,6 @@
-%%% store
-%%%
+%% store.erl
+%%
+%% A supervisor for a resilient shopping cart, implemented in `cart2'.
 
 
 -module(store).
@@ -17,6 +18,12 @@ init(Prices) ->
     loop(Prices, []).
 
 
+%% Supervisor resilience: State is stored in a list so is lost if the
+%% supervisor crashes.  An alternative would be to store it in a named
+%% DETS table, allowing state to be recovered.  Should the supervisor
+%% be lost through network partition we'd be no better off.  See
+%% written part of assignment for discussion.
+
 loop(Prices, State) ->
     io:format("store - looping with state: ~p~n", [State]),
     receive
@@ -27,6 +34,7 @@ loop(Prices, State) ->
 				      io:format("Stopping ~p~n", [CartPid]),
 				      CartPid ! {stop, self() } end, State),
 	    Pid ! {reply,ok};
+
 	{Pid, {start_link, UserName, Node }} ->
 	    Ref = list_to_atom(cart2:registered_name(make_ref())),
 	    Pid ! {reply, {ok, Ref}},
@@ -51,9 +59,6 @@ loop(Prices, State) ->
 	    io:format("store: spawning new cart ~p~n", [NewPid]),
 	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
 	    loop(Prices,NewState);
-
-	Unknown ->
-	    io:format("Store received unexpected message: ~p~n", [Unknown])
 	
     end.
 

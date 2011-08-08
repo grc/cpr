@@ -1,13 +1,39 @@
-#+TITLE:     CPR Assignment
-#+AUTHOR:    Giles Chamberlin
-#+EMAIL:     
-#+DATE:      8 Aug 2011
-#+OPTIONS:   H:3 num:t toc:nil \n:nil @:t ::t |:t ^:t -:t f:t *:t <:t
-#+OPTIONS:   TeX:t LaTeX:t skip:nil d:nil todo:t pri:nil tags:not-in-toc
+% Created 2011-08-08 Mon 10:55
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{fixltx2e}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{float}
+\usepackage{wrapfig}
+\usepackage{soul}
+\usepackage{t1enc}
+\usepackage{textcomp}
+\usepackage{marvosym}
+\usepackage{wasysym}
+\usepackage{latexsym}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\tolerance=1000
+\usepackage{color}
+\usepackage{listings}
+\providecommand{\alert}[1]{\textbf{#1}}
+\begin{document}
+
+
+
+\title{CPR Assignment}
+\author{Giles Chamberlin}
+\date{8 Aug 2011}
+\maketitle
+
 
 
 \pagebreak
-* Why tail recursive?
+\section{Why tail recursive?}
+\label{sec-1}
+
 
 The server is intended to stay operational for long periods of time
 and many client calls.  The main server loop will therefore be entered
@@ -17,8 +43,9 @@ If the function is tail recursive, tail call optimisation can reuse
 the current frame, replacing the function call with a jump
 instruction.  This conserves stack space and allows infinite
 recursion.
+\section{Why use ReferenceId instead of Pid?}
+\label{sec-2}
 
-* Why use ReferenceId instead of Pid?
 
 The intention is that the client should be unaware of any failure in
 the server.  Pids are tied to a single unique server instance and so
@@ -26,31 +53,39 @@ sending to a particular Pid will be invalidated if the server fails.
 The traditional approach of adding a level of indirection allows the
 client to refer to a ReferenceId which is mapped in turn to a Pid.
 That mapping is opaque to the client.
+\section{Upgrade process}
+\label{sec-3}
 
-* Upgrade process
 
 For each node to be upgraded:
-- Copy new beam files to node
-- Mark node as in maintenance mode.  No new carts should be created on
+
+\begin{itemize}
+\item Copy new beam files to node
+\item Mark node as in maintenance mode.  No new carts should be created on
   this node.
-- Ideally: 
-  - allow time to pass and wait for all carts to terminate naturally.
-  - return node from maintenance mode.
-  - next fully qualified call to the cart on this node will invoke the
+\item Ideally:
+\begin{itemize}
+\item allow time to pass and wait for all carts to terminate naturally.
+\item return node from maintenance mode.
+\item next fully qualified call to the cart on this node will invoke the
     new code
-- Pragmatically:
-  - Some transactions will persist beyond a reasonable time scale for
+\end{itemize}
+\item Pragmatically:
+\begin{itemize}
+\item Some transactions will persist beyond a reasonable time scale for
     those transactions.
-  - Wait as long as possible to minimise the number of active
+\item Wait as long as possible to minimise the number of active
     transactions.
-  - Kill the remaining carts
-  - Allow the backup process to take over
-  - Once the node is quiet return from maintenance mode
-  - next fully qualified call to the cart on this node will invoke the
+\item Kill the remaining carts
+\item Allow the backup process to take over
+\item Once the node is quiet return from maintenance mode
+\item next fully qualified call to the cart on this node will invoke the
      new code
+\end{itemize}
+\end{itemize}
+\section{Synchronisation after server failure}
+\label{sec-4}
 
-
-* Synchronisation after server failure
 
 As implemented the synchronisation strategy relies on the two servers
 sharing an underlying DETS file.  Should one server fail, the other
@@ -72,7 +107,8 @@ transactions. When the network heals the system is left with two,
 allegedly definitive, copies of the transaction state.  Combining
 these two views (merge replication) depends on the nature of the
 transactions that have occurred and the local business policy.  In
-general it is not possible to guarantee a "correct" view of the state
+general it is not possible to guarantee a ``correct'' view of the state
 of the system and operator intervention, or automated business rules,
 may be required.  
 
+\end{document}
