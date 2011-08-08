@@ -13,7 +13,7 @@
 % Implementation
 
 init(Prices) ->
-    io:format("store - initialising~n"),
+    io:format("store - initialising~p~n", [self()]),
     process_flag(trap_exit,true),
     loop(Prices, []).
 
@@ -27,24 +27,28 @@ init(Prices) ->
 loop(Prices, State) ->
     io:format("store - looping with state: ~p~n", [State]),
     receive
-	{Pid, stop} ->
+	{TransId, Pid, stop} ->
 	    io:format("store - received stop from ~p~n", [Pid]),
 	    %% Stop all our carts:
 	    lists:foreach(fun ({_Name, _Ref, CartPid}) ->
 				      io:format("Stopping ~p~n", [CartPid]),
-				      CartPid ! {stop, self() } end, State),
-	    Pid ! {reply,ok};
+				      CartPid ! {stop, TransId, self() } end, State),
+	    Pid ! {reply, TransId, ok};
 
-	{Pid, {start_link, UserName, Node }} ->
+	{TransId, Pid, {start_link, UserName, Node }} ->
+	    io:format("store - received start link~n"),
 	    Ref = list_to_atom(cart2:registered_name(make_ref())),
-	    Pid ! {reply, {ok, Ref}},
+	    io:format("store - replying to ~p~n", [Pid]),
+	    Pid ! {reply, TransId, {ok, Ref}},
+	    io:format("store - new cart~n"),
 	    NewPid = new_cart(UserName, Prices, Ref, Node),
+	    io:format("store - looping~n"),
 	    loop(Prices, [{UserName, Ref, NewPid} |State]);
 
-	{Pid, {start_backup, Ref, Node}} ->
-	    io:format("State: ~p, Ref: ~p~n", [State, Ref]),
+	{TransId, Pid, {start_backup, Ref, Node}} ->
+	    io:format("store - received start_backup~n"),
 	    {UserName, Ref, _Pid} = lists:keyfind(Ref, 2, State),
-	    Pid ! {reply, {ok, Ref}},
+	    Pid ! {reply, TransId, {ok, Ref}},
 	    NewPid = new_cart(UserName, Prices, Ref, Node),
 	    loop(Prices, [{UserName, Ref, NewPid}|State]);
 
@@ -58,7 +62,7 @@ loop(Prices, State) ->
 	    NewPid =  restart_cart(UserName, Prices, Ref),
 	    io:format("store: spawning new cart ~p~n", [NewPid]),
 	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
-	    loop(Prices,NewState);
+	    loop(Prices,NewState)
 	
     end.
 
@@ -68,8 +72,10 @@ new_cart(Name, Prices, Ref, Node) ->
 
 
 
-%% restart_cart: we don't allow the caller to choose a node as 
-%% they'd probably specify the original and taht may have gone away.
+%% restart_cart: we don't allow the caller to choose a node as they'd
+%% probably specify the original and that may have gone away. Could
+%% round robin amongst all connected nodes but for now just limit to
+%% this node.
 
 restart_cart(Name, Prices, Ref) ->
     spawn_link(cart2, init, [Name, Prices, Ref, restart]).

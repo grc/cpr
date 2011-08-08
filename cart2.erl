@@ -121,18 +121,19 @@ send(Sync, RefId, Message) ->
     send(Sync, RefId, Message, 0).
 
 
-%% TODO file static values
 
 %% TODO need to add a unique marker to message as they may pass in flight
 
 send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
+    TransId = make_ref(),
     try 
 	io:format("sending to ~p at ~p~n", [RefId, global:whereis_name(RefId)]),
-	global:send(RefId, {Sync, self(), Message}) of 
+
+	global:send(RefId, {Sync, TransId, self(), Message}) of 
 	_ ->
 	    io:format("Sent ~p, ~p~n", [Sync, Message]),
 	    receive
-		{reply, Reply} -> Reply
+		{reply, TransId, Reply} -> Reply
 	    after
 		500 -> io:format("Retrying~n"),
 		    send(Sync,RefId, Message, RetryCount +1)
@@ -148,10 +149,11 @@ send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
 
     
 send(Message) ->
-    global:send(?MODULE , {self(),Message}),
+    TransId = make_ref(),
+    global:send(?MODULE , {TransId, self(),Message}),
     io:format("Sent ~p~n", [Message]),
     receive
-	{reply, Reply} ->
+	{reply, TransId, Reply} ->
 	    Reply
     end.
     
@@ -257,36 +259,34 @@ takeover(ProcName) ->
 loop(ProcName, Tables, Prices) ->
     io:format("cart {~p) looping~n", [self()]),
     receive
-
-	% TODO Don't use the Procname passed OOB in the monitor response: its coming up undefined!
 	{'DOWN', _Ref, process, {_ProcName, _Node}, Info} ->
-	    io:format("Cart ~p: Master down, ProcName ~p, Info: ~p~n", [self(), ProcName, Info]),
+	    io:format("Cart ~p: Master down, ProcName ~p, Info: ~p~n",
+		      
+		      [self(), ProcName, Info]),
 	    takeover(ProcName),
 	    loop(ProcName,Tables, Prices);
-	{stop, Pid} -> 
+	{stop, TransId, Pid} -> 
 	    io:format("Cart ~p: stopping~n", [self()]),
 	    close(Tables),
-	    reply(Pid, ok);
-	{request, Pid, Message} ->
-	    reply(Pid,ok),
+	    reply(Pid, TransId, ok);
+	{request, TransId, Pid, Message} ->
+	    reply(Pid, TransId, ok),
 	    [_Customer, Order] = Tables,
 	    ok = request(Message, Order),
 	    loop(ProcName, Tables, Prices);
-	{sync_request, Pid, Message} ->
+	{sync_request, TransId, Pid, Message} ->
 	    io:format("received sync_request: ~p~n",[Message]),
 	    case sync_request(Message, Tables, Prices) of 
 		{ok, Response} ->
-		    reply(Pid,Response),
+		    reply(Pid, TransId, Response),
 		    loop(ProcName,Tables, Prices);
 		{stop, Response} ->
 		    %% We're going to go away so need to tidy up our
 		    %% persistent storage.
 		    io:format("Cart ~p: stopping~n", [self()]),
 		    close(Tables),
-		    reply(Pid,Response)
-		%Unexpected -> io:format("cart2:Unexpected case clause :~p~n", [Unexpected])
-	    end;
-	Msg -> io:format("cart - Unexpected message: ~p~n", [Msg])
+		    reply(Pid, TransId, Response)
+	    end
     end.
 
 
@@ -303,9 +303,7 @@ sync_request({credit, Number,Date}, [Customer, _Order], _Prices) ->
 sync_request({address,Address}, [Customer, _Order], _Prices) ->
     set_address(Address,Customer);
 sync_request(buy, Tables, Prices) ->
-    buy(Tables, Prices);
-sync_request(Unknown, _A, _C) ->
-    io:format("Unexpected sync_request: ~p~n", [Unknown]).
+    buy(Tables, Prices).
 
 
     
@@ -315,15 +313,15 @@ sync_request(Unknown, _A, _C) ->
 
 
 
-reply(Pid, Message) ->
-    Pid ! {reply, Message}.
+reply(Pid, TransId, Message) ->
+    Pid ! {reply, TransId,  Message}.
 
 
 
 %% set_address
 set_address(Customer,Address) ->
     io:format("setting address to ~p~n", [Address]),
-    dets:insert(Customer, {address, Address}). % TODO error cases
+    dets:insert(Customer, {address, Address}). 
 
 address(Customer) ->
     [Address] = dets:lookup(address, Customer),
@@ -415,10 +413,7 @@ credit_details(Table) ->
 
 
 open(Tables) ->
-    lists:map(fun(T) ->
-		      {ok, T} = dets:open_file(T, [])
-	      end,
-	      Tables).
+    [{ok, T} = dets:open_file(T, []) || T <- Tables].
 
 %%% close - close the DETS tables passed in, then delete the
 %%% underlying file.

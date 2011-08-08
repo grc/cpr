@@ -9,7 +9,7 @@
 
 
 %% Private interfaces
--export([init/2, test/0]).
+-export([init/2, test/0, stop/0]).
 
 
 
@@ -57,6 +57,10 @@ credit_card(ReferenceId, Number, Date) ->
 buy(ReferenceId) ->
     sync_send(ReferenceId, buy).
 
+%% stop - a no-op function introduced for test compatibility with
+%% `cart2.erl'
+stop() ->
+    ok.
 
 %% API Impl
 send(Pid, Message) ->
@@ -118,7 +122,9 @@ loop(User, OrderLines, Prices) ->
 		{stop, Response} ->
 		    reply(Pid,Response)
 	    end;
-	Msg -> io:format("cart - Unexpected message: ~p~n", [Msg])
+	{stop, Pid} -> 
+	    io:format("Cart ~p: stopping~n", [self()]),
+	    reply(Pid, ok)
     end.
 
 
@@ -150,7 +156,7 @@ reply(Pid, Message) ->
     Pid ! {reply, Message}.
 
 set_address(User,Address) ->
-    {User#user{address=Address}, ok}. % TODO error cases
+    {User#user{address=Address}, ok}. 
 
 set_credit_card(User,Number,Date) ->
     case cc:is_valid(User#user.address, Number, Date) of
