@@ -125,6 +125,7 @@ send(Sync, RefId, Message) ->
 %% TODO need to add a unique marker to message as they may pass in flight
 
 send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
+    flush(),
     TransId = make_ref(),
     try 
 	io:format("sending to ~p at ~p~n", [RefId, global:whereis_name(RefId)]),
@@ -149,6 +150,7 @@ send(Sync, RefId,Message, RetryCount) when RetryCount < 3  ->
 
     
 send(Message) ->
+    flush(),
     TransId = make_ref(),
     global:send(?MODULE , {TransId, self(),Message}),
     io:format("Sent ~p~n", [Message]),
@@ -156,6 +158,16 @@ send(Message) ->
 	{reply, TransId, Reply} ->
 	    Reply
     end.
+
+
+% flush/0 - empty the message buffer, returning a list of all messages
+% found
+flush() ->
+    receive
+	Message -> [Message | flush()]
+    after 0 -> [] 
+    end.
+	    
     
 
 
