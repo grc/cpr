@@ -211,7 +211,7 @@ order(User, Item, N, Order) ->
     Reply=io_lib:format("~p ~p ~p, Total number of ~p: ~p.~n", 
 			[Action, Q1, Item, Item, Q2]),
     io:format(Reply),
-    %webclient:reply(User,Reply),
+    webclient:reply(User,Reply),
     lists:keyreplace(Item, 1, Order, {Item, Q2}).
 
 
@@ -230,18 +230,7 @@ modify_item( _Delta, Current) ->
 
 
 
-
-
-test() ->
-    {ok,TestPid} = start_link(my_user),
-    ok = macarons(TestPid, 3),
-    ok = macarons(TestPid, -2),
-    ok = macarons(TestPid, -3),
-    ok = donuts(TestPid,3),
-    {[{donuts, 3}, {macarons,0}, {danish,0}, {cupcakes,0}], 150} = 
-	view_cart(TestPid),
-    {error, billing_info} = buy(TestPid),
-    test_passed.
+%% Test harness in tests.erl
 
 			    
 		 

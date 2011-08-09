@@ -193,21 +193,10 @@ init(UserName, Prices, Ref) ->
     	no  -> init(UserName, Prices, Names, slave)
     end.
 
-init(UserName, Prices, Ref, restart) ->
-    ProcName = Ref,
-    Customer = string_from_ref("Customer-",Ref),
-    Order = string_from_ref("User-", Ref),
-    Names = {ProcName, Customer, Order},
-    init(UserName, Prices, Names, slave);
-
-
-
-
-
 %% init/4 - master variant sets up initial state in the DETS tables,
-%% slave variant just opens them.
-%% Slave variant will link to the master so it can take over in the event 
-%% of termination.
+%% slave variant just opens them.  restart variant is called when
+%% resurrecting a cart.  Slave variant will link to the master so it
+%% can take over in the event of termination.
 
 
 init(UserName, Prices, Names, master) ->
@@ -224,6 +213,16 @@ init(UserName, Prices, Names, master) ->
     dets:insert(Order, InitialOrderLines),
 
     loop(ProcName, Tables,Prices);
+
+
+init(UserName, Prices, Ref, restart) ->
+    ProcName = Ref,
+    Customer = string_from_ref("Customer-",Ref),
+    Order = string_from_ref("User-", Ref),
+    Names = {ProcName, Customer, Order},
+    init(UserName, Prices, Names, slave);
+
+
 
 init(_UserName, Prices, Names, slave) ->
     io:format("cart2 (~p): initialising slave~n", [self()]),
@@ -271,8 +270,9 @@ loop(ProcName, Tables, Prices) ->
 	    reply(Pid, TransId, ok);
 	{request, TransId, Pid, Message} ->
 	    reply(Pid, TransId, ok),
-	    [_Customer, Order] = Tables,
-	    ok = request(Message, Order),
+	    [Customer, Order] = Tables,
+	    [Name] = dets:lookup(Customer, name),
+	    ok = request(Name,Message, Order),
 	    loop(ProcName, Tables, Prices);
 	{sync_request, TransId, Pid, Message} ->
 	    io:format("received sync_request: ~p~n",[Message]),
@@ -293,8 +293,8 @@ loop(ProcName, Tables, Prices) ->
 
 
 
-request({order,Item,N},Table) ->
-    order(Item,N,Table).
+request(Name, {order,Item,N},Table) ->
+    order(Name, Item,N,Table).
 
 sync_request(view, [_Customer, Order], Prices) ->
     invoice(Order,Prices);
@@ -380,7 +380,7 @@ order_total(Table,Prices) ->
     
     
  %% order - > returns new order
-order(Item, N, Table) ->
+order(Name,Item, N, Table) ->
     io:format("Processing an order for ~p ~p~n", [N, Item]),
     [{Item, Quantity}] = dets:lookup(Table, Item),
     io:format("Item found"),
@@ -388,7 +388,7 @@ order(Item, N, Table) ->
     Reply=io_lib:format("~p ~p ~p, Total number of ~p: ~p.~n", 
 			[Action, Q1, Item, Item, Q2]),
     io:format(Reply),
-    %webclient:reply(User,Reply),
+    webclient:reply(Name,Reply),
     dets:insert(Table, {Item, Q2}).
 
 

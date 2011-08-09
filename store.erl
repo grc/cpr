@@ -33,22 +33,19 @@ loop(Prices, State) ->
 	    lists:foreach(fun ({_Name, _Ref, CartPid}) ->
 				      io:format("Stopping ~p~n", [CartPid]),
 				      CartPid ! {stop, TransId, self() } end, State),
-	    Pid ! {reply, TransId, ok};
+	    reply(Pid, TransId, ok);
 
 	{TransId, Pid, {start_link, UserName, Node }} ->
 	    io:format("store - received start link~n"),
 	    Ref = list_to_atom(cart2:registered_name(make_ref())),
-	    io:format("store - replying to ~p~n", [Pid]),
-	    Pid ! {reply, TransId, {ok, Ref}},
-	    io:format("store - new cart~n"),
+	    reply(Pid, TransId, {ok, Ref}),
 	    NewPid = new_cart(UserName, Prices, Ref, Node),
-	    io:format("store - looping~n"),
 	    loop(Prices, [{UserName, Ref, NewPid} |State]);
 
 	{TransId, Pid, {start_backup, Ref, Node}} ->
 	    io:format("store - received start_backup~n"),
 	    {UserName, Ref, _Pid} = lists:keyfind(Ref, 2, State),
-	    Pid ! {reply, TransId, {ok, Ref}},
+	    reply(Pid, TransId, {ok,Ref}),
 	    NewPid = new_cart(UserName, Prices, Ref, Node),
 	    loop(Prices, [{UserName, Ref, NewPid}|State]);
 
@@ -60,11 +57,14 @@ loop(Prices, State) ->
 	    io:format("store: ~p exited with reason ~p~n", [Pid, Reason]),
 	    {UserName, Ref, Pid} = lists:keyfind(Pid, 3,State),
 	    NewPid =  restart_cart(UserName, Prices, Ref),
-	    io:format("store: spawning new cart ~p~n", [NewPid]),
 	    NewState = lists:keyreplace(Pid, 3, State, {UserName, Ref, NewPid}),
 	    loop(Prices,NewState)
 	
     end.
+
+
+reply(Pid, TransId, Message) ->
+    Pid ! {reply, TransId, Message}.
 
     
 new_cart(Name, Prices, Ref, Node) ->
